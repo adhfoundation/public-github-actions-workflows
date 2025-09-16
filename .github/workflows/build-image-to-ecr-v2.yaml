@@ -73,9 +73,9 @@ jobs:
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
     # These permissions are needed to interact with GitHub's OIDC Token endpoint.
-    #permissions:
-    #  contents: read
-    #  id-token: write
+    permissions:
+      contents: read
+      id-token: write
     #  pull-requests: write
     steps:
       - name: Checkout
