@@ -125,15 +125,18 @@ jobs:
         with:
           image-ref: ${{ vars.ECR_URL }}/${{ vars.ECR_REPO }}:${{ inputs.docker-tag }}
           format: 'json'
+          hide-progress: true
           exit-code: '1'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
           output: trivy-report.json
+          timeout: 10m
 
       - name: Generate Job Summary
         shell: bash
         run: |
+          cat trivy-report.json
           echo "## 🛡️ Trivy Vulnerability Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Package | Vulnerability | Severity | Installed | Fixed |" >> $GITHUB_STEP_SUMMARY
