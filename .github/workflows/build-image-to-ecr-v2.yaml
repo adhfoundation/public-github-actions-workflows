@@ -35,7 +35,7 @@ on:
         description: Is the repository public?
         default: false
       runs_on:
-        required: true
+        required: false
         type: string
         description: github host machine
         default: ubuntu-22.04
@@ -73,10 +73,10 @@ jobs:
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
     # These permissions are needed to interact with GitHub's OIDC Token endpoint.
-    permissions:
-      contents: read
-      id-token: write
-      pull-requests: write
+    #permissions:
+    #  contents: read
+    #  id-token: write
+    #  pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
