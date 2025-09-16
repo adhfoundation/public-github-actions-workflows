@@ -1,0 +1,184 @@
+name: Build docker image
+
+on:
+  workflow_call:
+    inputs:
+      docker-build-args:
+        required: false
+        type: string
+        description: docker build args
+      docker-build-target:
+        required: false
+        type: string
+        description: Docker Image target during build
+      docker-build-context:
+        required: false
+        type: string
+        description: Dockerfile dir
+        default: '.'
+      docker-file-path:
+        required: false
+        type: string
+        description: Dockerfile path
+        default: 'Dockerfile'
+      docker-tag:
+        required: true
+        type: string
+        description: Tag to be linked on ECR
+      environment:
+        required: true
+        type: string
+        description: Environment
+      public-repository:
+        required: false
+        type: boolean
+        description: Is the repository public?
+        default: false
+      runs_on:
+        required: true
+        type: string
+        description: github host machine
+        default: ubuntu-22.04
+      scan-image:
+        required: false
+        type: boolean
+        default: true
+        description: Scan image with docker scout
+      scout-command:
+        required: false
+        type: string
+        default: quickview,cves,recommendations
+        description: Scout command to run e.g. quickview,cves,recommendations,sbom,environment,compare
+
+    secrets:
+      GH_SCOUT_ACCESS_TOKEN:
+        required: false
+      GH_ACCESS_TOKEN:
+        required: false
+      PIP_EXTRA_INDEX_URL:
+        required: false
+      REQUIREMENTS:
+        required: false
+      DOCKERHUB_USER:
+        required: false
+      DOCKERHUB_PASSWORD:
+        required: false
+
+env:
+  TERM: xterm-256color
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_CREDS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR Public
+        if: inputs.public-repository == true
+        id: login-ecr-public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Login to Private ECR ${{ vars.ECR_URL }}
+        if: inputs.public-repository == false
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.ECR_URL }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          context: ${{ inputs.docker-build-context }}
+          target: ${{ inputs.docker-build-target }}
+          file: ${{ inputs.docker-file-path }}
+          tags: |
+            ${{ vars.ECR_URL }}/${{ vars.ECR_REPO }}:latest
+            ${{ vars.ECR_URL }}/${{ vars.ECR_REPO }}:${{ inputs.docker-tag }}
+          build-args: |
+            GH_ACCESS_TOKEN=${{ secrets.GH_ACCESS_TOKEN }}
+            PIP_EXTRA_INDEX_URL=${{ secrets.PIP_EXTRA_INDEX_URL }}
+            ${{ inputs.docker-build-args }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ vars.ECR_URL }}/${{ vars.ECR_REPO }}:${{ inputs.docker-tag }}
+          format: 'json'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          output: trivy-report.json
+
+      - name: Generate Job Summary
+        shell: bash
+        run: |
+          echo "## 🛡️ Trivy Vulnerability Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Vulnerability | Severity | Installed | Fixed |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------------|----------|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          jq -r '
+            .Results[].Vulnerabilities[]? |
+            "| \(.PkgName) | \(.VulnerabilityID) | \(.Severity) | \(.InstalledVersion) | \(.FixedVersion // "-") |"
+          ' trivy-report.json >> $GITHUB_STEP_SUMMARY
+
+      #- name: Validate Docker Scout secrets
+      #  if: ${{ inputs.scan-image == true }}
+      #  continue-on-error: true
+      #  run: |
+      #    missing=0
+      #    if [ -z "${{ secrets.GH_SCOUT_ACCESS_TOKEN }}" ]; then
+      #      echo "Error: GH_SCOUT_ACCESS_TOKEN secret is required for Docker Scout scan."
+      #      missing=1
+      #    fi
+      #    if [ -z "${{ secrets.DOCKERHUB_USER }}" ]; then
+      #      echo "Error: DOCKERHUB_USER secret is required for Docker Scout scan."
+      #      missing=1
+      #    fi
+      #    if [ -z "${{ secrets.DOCKERHUB_PASSWORD }}" ]; then
+      #      echo "Error: DOCKERHUB_PASSWORD secret is required for Docker Scout scan."
+      #      missing=1
+      #    fi
+      #    if [ "$missing" -eq 1 ]; then
+      #      echo
+      #      echo "Exemplo de uso no workflow da aplicação:"
+      #      echo
+      #      echo "  secrets:"
+      #      echo "    GH_SCOUT_ACCESS_TOKEN: \${{ secrets.GITHUB_TOKEN }}"
+      #      echo "    DOCKERHUB_USER: \${{ secrets.DOCKERHUB_USER }}"
+      #      echo "    DOCKERHUB_PASSWORD: \${{ secrets.DOCKERHUB_PASSWORD }}"
+      #      exit 1
+      #    fi
+
+      #- name: Scan Docker Scout
+      #  if: ${{ inputs.scan-image == true }}
+      #  continue-on-error: true
+      #  uses: docker/scout-action@v1
+      #  with:
+      #    command: ${{ inputs.scout-command }}
+      #    write-comment: ${{ github.event_name == 'pull_request' }}
+      #    image: ${{ vars.ECR_URL }}/${{ vars.ECR_REPO }}:${{ inputs.docker-tag }}
+      #    github-token: ${{ secrets.GH_SCOUT_ACCESS_TOKEN }}
+      #    dockerhub-user: ${{ secrets.DOCKERHUB_USER }}
+      #    dockerhub-password: ${{ secrets.DOCKERHUB_PASSWORD }}
