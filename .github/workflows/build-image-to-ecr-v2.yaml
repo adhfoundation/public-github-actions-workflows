@@ -120,31 +120,35 @@ jobs:
             PIP_EXTRA_INDEX_URL=${{ secrets.PIP_EXTRA_INDEX_URL }}
             ${{ inputs.docker-build-args }}
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.28.0
+      - name: Scan image
+        uses: anchore/scan-action@v6
         with:
-          image-ref: ${{ vars.ECR_URL }}/${{ vars.ECR_REPO }}:${{ inputs.docker-tag }}
-          format: 'json'
-          hide-progress: true
-          exit-code: '1'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-          output: trivy-report.json
-          timeout: 10m
+          image: ${{ vars.ECR_URL }}/${{ vars.ECR_REPO }}:${{ inputs.docker-tag }}
+      #- name: Run Trivy vulnerability scanner
+      #  uses: aquasecurity/trivy-action@0.28.0
+      #  with:
+      #    image-ref: ${{ vars.ECR_URL }}/${{ vars.ECR_REPO }}:${{ inputs.docker-tag }}
+      #    format: 'json'
+      #    hide-progress: true
+      #    exit-code: '1'
+      #    ignore-unfixed: true
+      #    vuln-type: 'os,library'
+      #    severity: 'CRITICAL,HIGH'
+      #    output: trivy-report.json
+      #    timeout: 10m
 
-      - name: Generate Job Summary
-        shell: bash
-        run: |
-          cat trivy-report.json
-          echo "## 🛡️ Trivy Vulnerability Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Package | Vulnerability | Severity | Installed | Fixed |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|---------------|----------|-----------|-------|" >> $GITHUB_STEP_SUMMARY
-          jq -r '
-            .Results[].Vulnerabilities[]? |
-            "| \(.PkgName) | \(.VulnerabilityID) | \(.Severity) | \(.InstalledVersion) | \(.FixedVersion // "-") |"
-          ' trivy-report.json >> $GITHUB_STEP_SUMMARY
+      #- name: Generate Job Summary
+      #  shell: bash
+      #  run: |
+      #    cat trivy-report.json
+      #    echo "## 🛡️ Trivy Vulnerability Report" >> $GITHUB_STEP_SUMMARY
+      #    echo "" >> $GITHUB_STEP_SUMMARY
+      #    echo "| Package | Vulnerability | Severity | Installed | Fixed |" >> $GITHUB_STEP_SUMMARY
+      #    echo "|---------|---------------|----------|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+      #    jq -r '
+      #      .Results[].Vulnerabilities[]? |
+      #      "| \(.PkgName) | \(.VulnerabilityID) | \(.Severity) | \(.InstalledVersion) | \(.FixedVersion // "-") |"
+      #    ' trivy-report.json >> $GITHUB_STEP_SUMMARY
 
       #- name: Validate Docker Scout secrets
       #  if: ${{ inputs.scan-image == true }}
