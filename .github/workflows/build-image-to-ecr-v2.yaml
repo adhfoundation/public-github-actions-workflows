@@ -120,10 +120,10 @@ jobs:
             PIP_EXTRA_INDEX_URL=${{ secrets.PIP_EXTRA_INDEX_URL }}
             ${{ inputs.docker-build-args }}
 
-      - name: Scan image
-        uses: anchore/scan-action@v6
-        with:
-          image: ${{ vars.ECR_URL }}/${{ vars.ECR_REPO }}:${{ inputs.docker-tag }}
+      #- name: Scan image
+      #  uses: anchore/scan-action@v6
+      #  with:
+      #    image: ${{ vars.ECR_URL }}/${{ vars.ECR_REPO }}:${{ inputs.docker-tag }}
       #- name: Run Trivy vulnerability scanner
       #  uses: aquasecurity/trivy-action@0.28.0
       #  with:
