@@ -1,0 +1,51 @@
+name: Create release
+
+on:
+  workflow_call:
+    inputs:
+      bump-type:
+        required: true
+        type: string
+        description: Release type
+      prefix:
+        required: true
+        type: string
+        description: Prefix
+    outputs:
+      release-tag:
+        description: Release Tag
+        value: ${{ jobs.create-release.outputs.release-tag }}
+    secrets:
+      GH_TOKEN:
+        required: true
+
+jobs:
+
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release-tag: ${{ inputs.prefix }}${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Generate next release
+        uses: zwaldowski/semver-release-action@v4
+        id: version
+        with:
+          bump: ${{ inputs.bump-type }}
+          prefix: ${{ inputs.prefix }}
+          github_token: ${{ secrets.GH_TOKEN }}
+          dry_run: true
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          generateReleaseNotes: true
+          name: ${{ inputs.prefix }}${{ steps.version.outputs.version }}
+          tag: ${{ inputs.prefix }}${{ steps.version.outputs.version }}
+          token: ${{ secrets.GH_TOKEN }}
+
+
