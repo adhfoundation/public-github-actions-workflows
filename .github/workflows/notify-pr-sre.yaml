@@ -1,0 +1,65 @@
+name: Notify Slack channel sre-reviews on new Pull Request
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: Environment
+    secrets:
+      SLACK_BOT_TOKEN:
+        required: true
+
+jobs:
+  pr-slack:
+    runs-on: ubuntu-latest
+    environment: slack-iclinic
+    steps:
+      - name: Check allowed users
+        id: check-user
+        run: |
+          ALLOWED_USERS=("danielbatistaafya" "toketas" "felipegfalcao" "Milena2712" "ItaloBritoAfya" "carlos-diego" "thiagosnogueira" "jheniffersousa" "marcioinfo")
+          AUTHOR="${{ github.event.pull_request.user.login }}"
+          if [[ " ${ALLOWED_USERS[@]} " =~ " ${AUTHOR} " ]]; then
+            echo "is_allowed=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_allowed=false" >> $GITHUB_OUTPUT
+          fi
+
+      # --- Step 2: Post Slack message on PR open ---
+      - name: Post Slack message for new PR
+        if: github.event_name == 'pull_request' && github.event.action == 'opened' && steps.check-user.outputs.is_allowed == 'true'
+        id: slack-post
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          method: chat.postMessage
+          payload: |
+            channel: "C06GQUG14KA"
+            text: "🚀 New PR from *${{ github.event.pull_request.user.login }}*: <${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>"
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      # --- Step 3: Count approved reviews ---
+      - name: Count approved reviews
+        if: github.event_name == 'pull_request_review' && steps.check-user.outputs.is_allowed == 'true'
+        id: approvals
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          REPO="${{ github.repository }}"
+          APPROVALS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/reviews \
+            | jq '[.[] | select(.state=="APPROVED")] | length')
+          echo "approvals=$APPROVALS" >> $GITHUB_OUTPUT
+
+      # --- Step 4: Add check emoji when first reviewer approves ---
+      - name: Add check emoji reaction on Slack
+        if: github.event_name == 'pull_request_review' && steps.check-user.outputs.is_allowed == 'true' && steps.approvals.outputs.approvals >= 1
+        uses: slackapi/slack-github-action@v2.1.1
+        with:
+          method: reactions.add
+          payload: |
+            channel: "C06GQUG14KA",
+            name: "white_check_mark",
+            timestamp: "${{ steps.slack-post.outputs.ts }}"
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
