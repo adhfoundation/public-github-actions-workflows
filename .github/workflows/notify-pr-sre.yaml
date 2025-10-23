@@ -40,26 +40,26 @@ jobs:
           token: ${{ secrets.SLACK_BOT_TOKEN }}
 
       # --- Step 3: Count approved reviews ---
-      - name: Count approved reviews
-        if: github.event_name == 'pull_request_review' && steps.check-user.outputs.is_allowed == 'true'
-        id: approvals
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          REPO="${{ github.repository }}"
-          APPROVALS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/reviews \
-            | jq '[.[] | select(.state=="APPROVED")] | length')
-          echo "approvals=$APPROVALS" >> $GITHUB_OUTPUT
+      #- name: Count approved reviews
+      #  if: github.event_name == 'pull_request_review' && steps.check-user.outputs.is_allowed == 'true'
+      #  id: approvals
+      #  run: |
+      #    PR_NUMBER=${{ github.event.pull_request.number }}
+      #    REPO="${{ github.repository }}"
+      #    APPROVALS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+      #      -H "Accept: application/vnd.github+json" \
+      #      https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/reviews \
+      #      | jq '[.[] | select(.state=="APPROVED")] | length')
+      #    echo "approvals=$APPROVALS" >> $GITHUB_OUTPUT
 
-      # --- Step 4: Add check emoji when first reviewer approves ---
-      - name: Add check emoji reaction on Slack
-        if: github.event_name == 'pull_request_review' && steps.check-user.outputs.is_allowed == 'true' && steps.approvals.outputs.approvals >= 1
-        uses: slackapi/slack-github-action@v2.1.1
-        with:
-          method: reactions.add
-          payload: |
-            channel: "C06GQUG14KA",
-            name: "white_check_mark",
-            timestamp: "${{ steps.slack-post.outputs.ts }}"
-          token: ${{ secrets.SLACK_BOT_TOKEN }}
+      ## --- Step 4: Add check emoji when first reviewer approves ---
+      #- name: Add check emoji reaction on Slack
+      #  if: github.event_name == 'pull_request_review' && steps.check-user.outputs.is_allowed == 'true' && steps.approvals.outputs.approvals >= 1
+      #  uses: slackapi/slack-github-action@v2.1.1
+      #  with:
+      #    method: reactions.add
+      #    payload: |
+      #      channel: "C06GQUG14KA",
+      #      name: "white_check_mark",
+      #      timestamp: "${{ steps.slack-post.outputs.ts }}"
+      #    token: ${{ secrets.SLACK_BOT_TOKEN }}
