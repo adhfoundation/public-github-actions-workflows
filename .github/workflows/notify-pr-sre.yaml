@@ -19,7 +19,7 @@ jobs:
       - name: Check allowed users
         id: check-user
         run: |
-          ALLOWED_USERS=("danielbatistaafya" "toketas" "felipegfalcao" "Milena2712" "ItaloBritoAfya" "carlos-diego" "thiagosnogueira" "jheniffersousa" "marcioinfo", "backstage-afya-github-app")
+          ALLOWED_USERS=("danielbatistaafya" "toketas" "felipegfalcao" "Milena2712" "ItaloBritoAfya" "carlos-diego" "thiagosnogueira" "jheniffersousa" "marcioinfo", "backstage-afya-github-app[bot]")
           AUTHOR="${{ github.event.pull_request.user.login }}"
           if [[ " ${ALLOWED_USERS[@]} " =~ " ${AUTHOR} " ]]; then
             echo "is_allowed=true" >> $GITHUB_OUTPUT
