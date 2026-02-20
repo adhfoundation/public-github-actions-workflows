@@ -1,0 +1,33 @@
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        required: false
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  backstage_entity_lint:
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - id: check_changed_entities
+        name: List Changed Files
+        run: |
+          CHANGED_FILES=$(git diff --name-only \
+          ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} -- \
+          '*.yaml' \
+          ':(exclude).github/**' \
+          | paste -sd ',')
+
+          echo "changed_files=$CHANGED_FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Backstage Entity Validator
+        if: steps.check_changed_entities.outputs.changed_files != ''
+        uses:  RoadieHQ/backstage-entity-validator@v0.3.11
+        with:
+          path: ${{ steps.check_changed_entities.outputs.changed_files }}
