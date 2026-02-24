@@ -45,7 +45,7 @@ on:
         default: false
         description: Should skip vault step
       vault-secret-path:
-        required: true
+        required: false
         type: string
         description: Vault Secret Path
     secrets:
@@ -100,9 +100,9 @@ jobs:
           LAMBDA_RUNTIME: ${{ inputs.lambda-runtime }}
           LAMBDA_SOURCE_PATH: ../
           LAMBDA_TIMEOUT: ${{ inputs.lambda-timeout }}
+          SKIP_VAULT: ${{ inputs.skip-vault }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_APPROLE_ID: ${{ secrets.VAULT_APPROLE_ID }}
           VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
           VAULT_SECRET_PATH: ${{ inputs.vault-secret-path }}
-          SKIP_VAULT: ${{ inputs.skip-vault }}
         run: node deploy.js
