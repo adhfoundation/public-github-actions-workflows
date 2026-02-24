@@ -86,7 +86,7 @@ jobs:
         run: |
           ls -lha
       - name: Install deploy dependencies
-        working-directory: deploy-lambda
+        working-directory: deploy-files
         run: npm install
       - name: Deploy Lambda
         working-directory: deploy-lambda
