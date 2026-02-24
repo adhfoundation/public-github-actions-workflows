@@ -64,12 +64,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: lambda
       - name: Checkout deploy tools
         uses: actions/checkout@v4
         with:
           ref: feat/deploy-lambda
           repository: adhfoundation/public-github-actions-workflows
-          path: deploy-lambda
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -85,6 +86,7 @@ jobs:
         run: |
           ls -lha
           ls -lha deploy-lambda/
+          ls -lha lambda/
       - name: Install deploy dependencies
         working-directory: deploy-lambda
         run: npm install
