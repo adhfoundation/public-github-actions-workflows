@@ -81,7 +81,6 @@ jobs:
         with:
           node-version: 20
       - name: debug
-        working-directory: deploy-lambda
         shell: bash
         run: |
           ls -lha
