@@ -71,6 +71,7 @@ jobs:
         with:
           ref: feat/deploy-lambda
           repository: adhfoundation/public-github-actions-workflows
+          path: deploy-files
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -84,8 +85,6 @@ jobs:
         shell: bash
         run: |
           ls -lha
-          ls -lha deploy-lambda/
-          ls -lha lambda/
       - name: Install deploy dependencies
         working-directory: deploy-lambda
         run: npm install
