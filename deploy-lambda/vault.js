@@ -1,10 +1,16 @@
 import axios from "axios";
 
 export async function getVaultSecrets() {
+  const skipVault = process.env.SKIP_VAULT;
   const vaultAddr = process.env.VAULT_ADDR;
   const roleId = process.env.VAULT_APPROLE_ID;
   const secretId = process.env.VAULT_SECRET_ID;
   const secretPath = process.env.VAULT_SECRET_PATH;
+
+  if (skipVault) {
+    console.log("Skipping vault...");
+    return {};
+  }
 
   // Login using AppRole
   const loginRes = await axios.post(

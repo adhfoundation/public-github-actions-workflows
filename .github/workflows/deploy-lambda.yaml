@@ -81,11 +81,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: debug
-        shell: bash
-        run: |
-          ls -lha
-          ls -lha deploy-files
       - name: Install deploy dependencies
         working-directory: deploy-files/deploy-lambda
         run: npm install
@@ -104,4 +99,5 @@ jobs:
           VAULT_APPROLE_ID: ${{ secrets.VAULT_APPROLE_ID }}
           VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
           VAULT_SECRET_PATH: ${{ inputs.vault-secret-path }}
+          SKIP_VAULT: ${{ inputs.skip-vault }}
         run: node deploy.js
