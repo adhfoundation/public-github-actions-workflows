@@ -1,0 +1,99 @@
+---
+name: Deploy Lambda
+on:
+  workflow_call:
+    inputs:
+      aws-region:
+        required: true
+        type: string
+        default: us-east-1
+        description: AWS Region
+      environment:
+        required: true
+        type: string
+        description: Environment
+      lambda-function-name:
+        required: true
+        type: string
+        description: Lambda Function Name
+      lambda-handler:
+        required: true
+        type: string
+        description: Lambda handler function
+      lambda-runtime:
+        required: true
+        type: string
+        description: Lambda Runtime
+      lambda-timeout:
+        required: true
+        type: integer
+        default: 10
+        description: Lambda Timeout in Seconds
+      lambda-memory-size:
+        required: true
+        type: integer
+        default: 128
+        description: Lambda Memory Size (in Mb)
+      runs-on:
+        required: true
+        type: string
+        default: ubuntu-latest
+        description: Instance OS
+      vault-secret-path:
+        required: true
+        type: string
+        description: Vault Secret Path
+    secrets:
+      AWS_ROLE_TO_ASSUME:
+        required: true
+      LAMBDA_ROLE_ARN:
+        required: true
+      VAULT_ADDR:
+        required: true
+      VAULT_APPROLE_ID:
+        required: true
+      VAULT_SECRET_ID:
+        required: true
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  deploy:
+    runs-on: ${{ inputs.runs-on }}
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Checkout deploy tools
+        uses: actions/checkout@v4
+        with:
+          repository: adhfoundation/public-github-actions-workflows
+          path: deploy-lambda
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ inputs.aws-region }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install deploy dependencies
+        working-directory: deploy-lambda
+        run: npm install
+      - name: Deploy Lambda
+        working-directory: deploy-lambda
+        env:
+          AWS_REGION: ${{ inputs.aws-region }}
+          LAMBDA_HANDLER: ${{ inputs.lambda-handler }}
+          LAMBDA_MEMORY: ${{ inputs.lambda-memory-size }}
+          LAMBDA_NAME: ${{ inputs.lambda-function-name }}
+          LAMBDA_ROLE_ARN: ${{ secrets.LAMBDA_ROLE_ARN }}
+          LAMBDA_RUNTIME: ${{ inputs.lambda-runtime }}
+          LAMBDA_SOURCE_PATH: ../
+          LAMBDA_TIMEOUT: ${{ inputs.lambda-timeout }}
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_APPROLE_ID: ${{ secrets.VAULT_APPROLE_ID }}
+          VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
+          VAULT_SECRET_PATH: ${{ inputs.vault-secret-path }}
+        run: node deploy.js
