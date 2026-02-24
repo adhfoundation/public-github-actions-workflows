@@ -1,0 +1,9 @@
+{
+  "name": "lambda-deployer",
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-lambda": "^3.600.0",
+    "axios": "^1.6.0",
+    "archiver": "^6.0.0"
+  }
+}
