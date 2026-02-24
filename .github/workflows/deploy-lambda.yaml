@@ -87,10 +87,10 @@ jobs:
           ls -lha
           ls -lha deploy-files
       - name: Install deploy dependencies
-        working-directory: deploy-files
+        working-directory: deploy-files/deploy-lambda
         run: npm install
       - name: Deploy Lambda
-        working-directory: deploy-lambda
+        working-directory: deploy-files/deploy-lambda
         env:
           AWS_REGION: ${{ inputs.aws-region }}
           LAMBDA_HANDLER: ${{ inputs.lambda-handler }}
