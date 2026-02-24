@@ -67,6 +67,7 @@ jobs:
       - name: Checkout deploy tools
         uses: actions/checkout@v4
         with:
+          ref: feat/deploy-lambda
           repository: adhfoundation/public-github-actions-workflows
           path: deploy-lambda
       - name: Configure AWS credentials
@@ -79,7 +80,7 @@ jobs:
         with:
           node-version: 20
       - name: Install deploy dependencies
-        working-directory: deploy-lambda/deploy-lambda
+        working-directory: deploy-lambda
         run: npm install
       - name: Deploy Lambda
         working-directory: deploy-lambda
