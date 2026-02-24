@@ -79,6 +79,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: debug
+        working-directory: deploy-lambda
+        shell: bash
+        run: |
+          ls -lha
       - name: Install deploy dependencies
         working-directory: deploy-lambda
         run: npm install
