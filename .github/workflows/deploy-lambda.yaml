@@ -26,12 +26,12 @@ on:
         description: Lambda Runtime
       lambda-timeout:
         required: true
-        type: integer
+        type: number
         default: 10
         description: Lambda Timeout in Seconds
       lambda-memory-size:
         required: true
-        type: integer
+        type: number
         default: 128
         description: Lambda Memory Size (in Mb)
       runs-on:
