@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       aws-region:
-        required: true
+        required: false
         type: string
         default: us-east-1
         description: AWS Region
@@ -25,17 +25,17 @@ on:
         type: string
         description: Lambda Runtime
       lambda-timeout:
-        required: true
+        required: false
         type: number
         default: 10
         description: Lambda Timeout in Seconds
       lambda-memory-size:
-        required: true
+        required: false
         type: number
         default: 128
         description: Lambda Memory Size (in Mb)
       runs-on:
-        required: true
+        required: false
         type: string
         default: ubuntu-latest
         description: Instance OS
