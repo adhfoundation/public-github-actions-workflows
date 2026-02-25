@@ -27,7 +27,7 @@ jobs:
           echo "changed_files=$CHANGED_FILES" >> "$GITHUB_OUTPUT"
 
       - name: Backstage Entity Validator
-        if: steps.check_changed_entities.outputs.changed_files != ''
+        if: ${{ steps.check_changed_entities.outputs.changed_files != '' }}
         uses:  RoadieHQ/backstage-entity-validator@v0.3.11
         with:
           path: ${{ steps.check_changed_entities.outputs.changed_files }}
