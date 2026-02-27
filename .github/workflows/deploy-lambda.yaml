@@ -53,6 +53,10 @@ on:
         required: true
       LAMBDA_ROLE_ARN:
         required: true
+      LAMBDA_SUBNET_IDS:
+        required: true
+      LAMBDA_SECURITY_GROUP_IDS:
+        required: true
       VAULT_ADDR:
         required: true
       VAULT_APPROLE_ID:
@@ -101,7 +105,9 @@ jobs:
           LAMBDA_NAME: ${{ inputs.lambda-function-name }}
           LAMBDA_ROLE_ARN: ${{ secrets.LAMBDA_ROLE_ARN }}
           LAMBDA_RUNTIME: ${{ inputs.lambda-runtime }}
+          LAMBDA_SECURITY_GROUP_IDS: ${{ secrets.LAMBDA_SECURITY_GROUP_IDS }}
           LAMBDA_SOURCE_PATH: ../../lambda
+          LAMBDA_SUBNET_IDS: ${{ secrets.LAMBDA_SUBNET_IDS }}
           LAMBDA_TIMEOUT: ${{ inputs.lambda-timeout }}
           SKIP_VAULT: ${{ inputs.skip-vault }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
