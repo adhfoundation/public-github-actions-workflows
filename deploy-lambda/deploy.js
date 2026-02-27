@@ -33,6 +33,16 @@ async function zipLambda() {
   });
 }
 
+function stringToList(input) {
+  // transform into array
+  const list = input
+    .split(",") // split by comma
+    .map((item) => item.trim()) // remove extra spaces
+    .filter(Boolean); // remove empty values (optional)
+
+  return list;
+}
+
 async function lambdaExists() {
   try {
     await client.send(
@@ -118,6 +128,11 @@ async function deploy() {
       },
       MemorySize: Number(process.env.LAMBDA_MEMORY),
       Timeout: Number(process.env.LAMBDA_TIMEOUT),
+      VpcConfig: {
+        SubnetIds: stringToList(process.env.LAMBDA_SUBNET_IDS),
+        SecurityGroupIds: stringToList(process.env.LAMBDA_SECURITY_GROUP_IDS),
+        Ipv6AllowedForDualStack: false,
+      },
     }),
   );
 
