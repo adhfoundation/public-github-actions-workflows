@@ -102,6 +102,11 @@ async function deploy() {
         MemorySize: Number(process.env.LAMBDA_MEMORY),
         Timeout: Number(process.env.LAMBDA_TIMEOUT),
         Publish: true,
+        VpcConfig: {
+          SubnetIds: stringToList(process.env.LAMBDA_SUBNET_IDS),
+          SecurityGroupIds: stringToList(process.env.LAMBDA_SECURITY_GROUP_IDS),
+          Ipv6AllowedForDualStack: false,
+        },
       }),
     );
 
