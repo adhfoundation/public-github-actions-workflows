@@ -7,7 +7,7 @@ export async function getVaultSecrets() {
   const secretId = process.env.VAULT_SECRET_ID;
   const secretPath = process.env.VAULT_SECRET_PATH;
 
-  if (skipVault) {
+  if (skipVault == "true") {
     console.log("Skipping vault step. Returning {}");
     return {};
   }
