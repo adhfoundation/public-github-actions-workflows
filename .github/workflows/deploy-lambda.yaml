@@ -44,6 +44,10 @@ on:
         type: boolean
         default: false
         description: Should skip vault step
+      vault-approle-name:
+        required: true
+        type: string
+        description: Vault approle auth name
       vault-secret-path:
         required: false
         type: string
@@ -111,6 +115,7 @@ jobs:
           LAMBDA_TIMEOUT: ${{ inputs.lambda-timeout }}
           SKIP_VAULT: ${{ inputs.skip-vault }}
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_APPROLE_NAME: ${{ inputs.vault-approle-name }}
           VAULT_APPROLE_ID: ${{ secrets.VAULT_APPROLE_ID }}
           VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
           VAULT_SECRET_PATH: ${{ inputs.vault-secret-path }}

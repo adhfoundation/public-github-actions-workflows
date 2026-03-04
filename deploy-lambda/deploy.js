@@ -124,9 +124,16 @@ async function deploy() {
   );
   await waitForLambdaUpdate();
 
-  //const layerArnNodeJs = "arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-nodejs-amd64-ver-1-30-2:1";
   const layerArnCollector =
+    "arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-nodejs-amd64-ver-1-30-2:1";
+  const layerArnNodeJs =
     "arn:aws:lambda:us-east-1:184161586896:layer:opentelemetry-nodejs-0_20_0:1";
+  let layers = [];
+
+  if (process.env.ENABLE_OTEL_LAMBDA_LAYER) {
+    layers.push(layerArnNodeJs);
+    layers.push(layerArnCollector);
+  }
 
   console.log("Updating configuration...");
   await client.send(
@@ -135,7 +142,7 @@ async function deploy() {
       Environment: {
         Variables: envVars,
       },
-      Layers: [layerArnCollector],
+      Layers: layers,
       MemorySize: Number(process.env.LAMBDA_MEMORY),
       Timeout: Number(process.env.LAMBDA_TIMEOUT),
       VpcConfig: {
