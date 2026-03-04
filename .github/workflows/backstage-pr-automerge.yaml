@@ -1,0 +1,31 @@
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        required: false
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  automerge:
+    runs-on: ${{ inputs.runs-on }}
+    if: contains(github.event.pull_request.user.login, '[bot]')
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - id: automerge
+        name: automerge
+        uses: "pascalgn/automerge-action@v0.16.4"
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          MERGE_COMMIT_MESSAGE: "pull-request-title"
+          MERGE_RETRIES: 3
+          MERGE_RETRY_SLEEP: 10000
+          MERGE_ERROR_FAIL: true
+          MERGE_LABELS: ""
+  
+      - name: feedback
+        if: ${{ steps.automerge.outputs.mergeResult == 'merged' }}
+        run: |
+          echo "Pull request ${{ steps.automerge.outputs.pullRequestNumber }} merged!"
