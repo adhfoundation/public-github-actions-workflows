@@ -113,6 +113,7 @@ jobs:
             --grpc-web \
             --auth-token ${{ secrets.ARGOCD_AUTH_TOKEN }} \
             --values ${{ inputs.argocd-values-file }} \
+            --sync-option CreateNamespace=true \
             ${{ inputs.argocd-additional-options }} 
 
       - name: Run Sync on ArgoCD
