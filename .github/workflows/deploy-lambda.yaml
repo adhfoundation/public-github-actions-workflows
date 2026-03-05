@@ -8,6 +8,11 @@ on:
         type: string
         default: us-east-1
         description: AWS Region
+      enable-otel-lambda-layer:
+        required: false
+        type: boolean
+        default: false
+        description: Should enable Opentelemetry Lambda Layer
       environment:
         required: true
         type: string
@@ -105,6 +110,7 @@ jobs:
         working-directory: deploy-files/deploy-lambda
         env:
           AWS_REGION: ${{ inputs.aws-region }}
+          ENABLE_OTEL_LAMBDA_LAYER: ${{ inputs.enable-otel-lambda-layer }}
           LAMBDA_HANDLER: ${{ inputs.lambda-handler }}
           LAMBDA_MEMORY: ${{ inputs.lambda-memory-size }}
           LAMBDA_NAME: ${{ inputs.lambda-function-name }}
