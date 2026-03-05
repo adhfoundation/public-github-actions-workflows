@@ -45,9 +45,10 @@ on:
         default: false
         description: Should skip vault step
       vault-approle-name:
-        required: true
+        required: false
         type: string
         description: Vault approle auth name
+        default: approle
       vault-secret-path:
         required: false
         type: string
