@@ -63,7 +63,7 @@ on:
         required: false
       DOCKERHUB_PASSWORD:
         required: false
-      ICLINIC_GEMFURY_TOKEN:
+      GEMFURY_TOKEN:
         required: false
 
 env:
@@ -120,7 +120,7 @@ jobs:
           build-args: |
             GH_ACCESS_TOKEN=${{ secrets.GH_ACCESS_TOKEN }}
             PIP_EXTRA_INDEX_URL=${{ secrets.PIP_EXTRA_INDEX_URL }}
-            ICLINIC_GEMFURY_TOKEN=${{ secrets.ICLINIC_GEMFURY_TOKEN }}
+            GEMFURY_TOKEN=${{ secrets.GEMFURY_TOKEN }}
             ${{ inputs.docker-build-args }}
 
       #- name: Scan image
