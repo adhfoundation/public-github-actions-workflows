@@ -122,7 +122,7 @@ jobs:
             PIP_EXTRA_INDEX_URL=${{ secrets.PIP_EXTRA_INDEX_URL }}
             ${{ inputs.docker-build-args }}
           secrets:
-            GEMFURY_TOKEN=${{ secrets.GEMFURY_TOKEN }}
+            GEMFURY_TOKEN=${{ secrets.GEMFURY_TOKEN || 'none' }}
 
       #- name: Scan image
       #  uses: anchore/scan-action@v6
