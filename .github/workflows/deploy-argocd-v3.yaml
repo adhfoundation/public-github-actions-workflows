@@ -103,7 +103,7 @@ jobs:
             --dest-namespace ${{ env.NAMESPACE }} \
             --dest-server ${{ vars.ARGOCD_DESTINATION_CLUSTER }} \
             --helm-set image.tag=${{ inputs.image-tag }} \
-            --helm-set 'podLabels.tags\.datadoghq\.com/version"=${{ inputs.image-tag }} \
+            --helm-set 'podLabels.tags\.datadoghq\.com/version'=${{ inputs.image-tag }} \
             --path ${{ inputs.argocd-chart-path }} \
             --project ${{ vars.ARGOCD_PROJECT }} \
             --repo ${{ inputs.argocd-chart-repo }} \
