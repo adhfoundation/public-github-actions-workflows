@@ -34,6 +34,11 @@ jobs:
   static-application-security-testing:
     runs-on: runner-security-${{ github.repository_owner }}
 
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
     env:
       SONAR_HOST_URL: ${{ inputs.sonar_host_url }}
       APPLICATION_NAME: ${{ github.event.repository.name }}
@@ -43,6 +48,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: SonarQube Scan
         run: |
@@ -58,4 +65,5 @@ jobs:
             -Dsonar.sources=. \
             -Dsonar.scm.provider=git \
             -Dsonar.sourceEncoding=UTF-8 \
+            ${{ github.event_name == 'pull_request' && format('-Dsonar.pullrequest.key={0} -Dsonar.pullrequest.branch={1} -Dsonar.pullrequest.base={2}', github.event.pull_request.number, github.head_ref, github.base_ref) || '' }} \
             -Dsonar.exclusions="chart/**,node_modules/**,dist/**,coverage/**${{ inputs.sonar_exclusions != '' && format(',{0}', inputs.sonar_exclusions) || '' }}"
