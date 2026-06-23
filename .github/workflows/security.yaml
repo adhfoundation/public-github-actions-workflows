@@ -3,23 +3,39 @@ name: Security Workflow
 on:
   workflow_call:
     inputs:
-      sonar_exclusions:
-        description: 'Additional Sonar exclusions'
+      sonar_host_url:
+        description: "SonarQube host URL"
         required: false
         type: string
-        default: ''
+        default: "http://sonar.afya.tools:9000/"
+      sonar_exclusions:
+        description: "Additional Sonar exclusions"
+        required: false
+        type: string
+        default: ""
     secrets:
       SONAR_FOUNDATION_TOKEN:
         required: true
 
   workflow_dispatch:
+    inputs:
+      sonar_host_url:
+        description: "SonarQube host URL"
+        required: false
+        type: string
+        default: "http://sonar.afya.tools:9000/"
+      sonar_exclusions:
+        description: "Additional Sonar exclusions"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   static-application-security-testing:
     runs-on: runner-security-${{ github.repository_owner }}
 
     env:
-      SONAR_HOST_URL: http://sonar.afya.tools:9000/
+      SONAR_HOST_URL: ${{ inputs.sonar_host_url }}
       APPLICATION_NAME: ${{ github.event.repository.name }}
       COMPANY: ${{ github.repository_owner }}
       GIT_DEPTH: 0
