@@ -13,6 +13,21 @@ on:
         required: false
         type: string
         default: ""
+      coverage_artifact:
+        description: "Name of a coverage artifact to download from a prior job in the same run (leave empty to skip)"
+        required: false
+        type: string
+        default: ""
+      coverage_report_paths:
+        description: "Path(s) to the coverage report relative to the repo root (e.g. coverage.out)"
+        required: false
+        type: string
+        default: ""
+      coverage_sonar_key:
+        description: "Sonar property key for the coverage report paths (language-specific)"
+        required: false
+        type: string
+        default: "sonar.go.coverage.reportPaths"
     secrets:
       SONAR_FOUNDATION_TOKEN:
         required: true
@@ -51,6 +66,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Download coverage report
+        if: inputs.coverage_artifact != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.coverage_artifact }}
+
       - name: SonarQube Scan
         run: |
           sonar-scanner \
@@ -66,4 +87,5 @@ jobs:
             -Dsonar.scm.provider=git \
             -Dsonar.sourceEncoding=UTF-8 \
             ${{ github.event_name == 'pull_request' && format('-Dsonar.pullrequest.key={0} -Dsonar.pullrequest.branch={1} -Dsonar.pullrequest.base={2}', github.event.pull_request.number, github.head_ref, github.base_ref) || '' }} \
+            ${{ inputs.coverage_report_paths != '' && format('-D{0}={1}', inputs.coverage_sonar_key, inputs.coverage_report_paths) || '' }} \
             -Dsonar.exclusions="chart/**,node_modules/**,dist/**,coverage/**${{ inputs.sonar_exclusions != '' && format(',{0}', inputs.sonar_exclusions) || '' }}"
