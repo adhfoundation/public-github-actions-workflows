@@ -51,6 +51,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Pull a coverage report if the caller uploaded one (artifact "coverage").
+      # Language-agnostic: repos without coverage have no artifact and skip this.
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: coverage
+          path: .
+
       - name: SonarQube Scan
         run: |
           sonar-scanner \
@@ -65,5 +74,6 @@ jobs:
             -Dsonar.sources=. \
             -Dsonar.scm.provider=git \
             -Dsonar.sourceEncoding=UTF-8 \
+            -Dsonar.go.coverage.reportPaths=coverage.out \
             ${{ github.event_name == 'pull_request' && format('-Dsonar.pullrequest.key={0} -Dsonar.pullrequest.branch={1} -Dsonar.pullrequest.base={2}', github.event.pull_request.number, github.head_ref, github.base_ref) || '' }} \
             -Dsonar.exclusions="chart/**,node_modules/**,dist/**,coverage/**${{ inputs.sonar_exclusions != '' && format(',{0}', inputs.sonar_exclusions) || '' }}"
