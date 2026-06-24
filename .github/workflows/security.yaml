@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: ""
+      fail_on_quality_gate:
+        description: "Fail the job if the SonarQube quality gate fails"
+        required: false
+        type: boolean
+        default: true
     secrets:
       SONAR_FOUNDATION_TOKEN:
         required: true
@@ -29,6 +34,11 @@ on:
         required: false
         type: string
         default: ""
+      fail_on_quality_gate:
+        description: "Fail the job if the SonarQube quality gate fails"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   static-application-security-testing:
@@ -65,7 +75,7 @@ jobs:
           sonar-scanner \
             -Dsonar.dependencyCheck.securityHotspot=true \
             -Dsonar.dependencyCheck.summarize=true \
-            -Dsonar.qualitygate.wait=true \
+            -Dsonar.qualitygate.wait=${{ inputs.fail_on_quality_gate }} \
             -Dsonar.projectKey=$COMPANY-$APPLICATION_NAME \
             -Dsonar.projectName=$COMPANY-$APPLICATION_NAME \
             -Dsonar.plugins.downloadOnlyRequired=true \
