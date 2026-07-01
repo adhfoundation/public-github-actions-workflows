@@ -18,9 +18,33 @@ on:
         required: false
         type: boolean
         default: true
+      jira_base_url:
+        description: "Jira base URL"
+        required: false
+        type: string
+        default: "https://afya.atlassian.net"
+      hotfix_label:
+        description: "PR label that triggers the hotfix flow"
+        required: false
+        type: string
+        default: "hotfix"
+      jira_hotfix_issue_type:
+        description: "Comma-separated Jira issuetype.name values that allow bypassing Sonar (case-insensitive)"
+        required: false
+        type: string
+        default: "Hotfix,Bugfix"
+      enable_jira_validation:
+        description: "Validate the linked Jira issue on pull requests"
+        required: false
+        type: boolean
+        default: true
     secrets:
       SONAR_FOUNDATION_TOKEN:
         required: true
+      JIRA_USER_EMAIL:
+        required: false
+      JIRA_API_TOKEN:
+        required: false
 
   workflow_dispatch:
     inputs:
@@ -36,6 +60,26 @@ on:
         default: ""
       fail_on_quality_gate:
         description: "Fail the job if the SonarQube quality gate fails"
+        required: false
+        type: boolean
+        default: true
+      jira_base_url:
+        description: "Jira base URL"
+        required: false
+        type: string
+        default: "https://afya.atlassian.net"
+      hotfix_label:
+        description: "PR label that triggers the hotfix flow"
+        required: false
+        type: string
+        default: "hotfix"
+      jira_hotfix_issue_type:
+        description: "Comma-separated Jira issuetype.name values that allow bypassing Sonar (case-insensitive)"
+        required: false
+        type: string
+        default: "Hotfix,Bugfix"
+      enable_jira_validation:
+        description: "Validate the linked Jira issue on pull requests"
         required: false
         type: boolean
         default: true
@@ -61,9 +105,88 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Always confirm the PR is backed by a real Jira issue. If the PR carries
+      # the hotfix label and the issue is a hotfix type, SonarQube is skipped.
+      - name: Validate Jira issue
+        id: jira
+        if: github.event_name == 'pull_request' && inputs.enable_jira_validation
+        env:
+          JIRA_BASE_URL: ${{ inputs.jira_base_url }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          HOTFIX_LABEL: ${{ inputs.hotfix_label }}
+          JIRA_HOTFIX_ISSUE_TYPE: ${{ inputs.jira_hotfix_issue_type }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          HAS_HOTFIX_LABEL: ${{ contains(github.event.pull_request.labels.*.name, inputs.hotfix_label) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Extract the Jira issue key from the branch name and PR title.
+          # `|| true` keeps a no-match from tripping `set -e`/`pipefail` so the
+          # friendly error below is what surfaces.
+          ISSUE_KEY=$(printf '%s %s' "$HEAD_REF" "$PR_TITLE" \
+            | grep -oiE '[A-Z][A-Z0-9]+-[0-9]+' | head -n 1 \
+            | tr '[:lower:]' '[:upper:]' || true)
+
+          if [ -z "$ISSUE_KEY" ]; then
+            echo "::error::No Jira issue key found in branch '$HEAD_REF' or PR title."
+            exit 1
+          fi
+          echo "Jira issue key: $ISSUE_KEY"
+
+          # Confirm the issue actually exists (guards against fake references)
+          HTTP=$(curl -sS -o response.json -w '%{http_code}' \
+            --user "$JIRA_USER_EMAIL:$JIRA_API_TOKEN" \
+            -H "Accept: application/json" \
+            "$JIRA_BASE_URL/rest/api/2/issue/$ISSUE_KEY?fields=issuetype,status")
+
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::Jira issue '$ISSUE_KEY' not found (HTTP $HTTP)."
+            cat response.json || true
+            exit 1
+          fi
+
+          # Log the returned fields so the real issue type is visible in the run
+          # (useful to discover the correct type when the check below rejects it).
+          echo "Jira API response for '$ISSUE_KEY':"
+          jq '.fields | {issuetype: .issuetype.name, status: .status.name}' response.json || cat response.json
+
+          ISSUE_TYPE=$(jq -r '.fields.issuetype.name // empty' response.json)
+          if [ -z "$ISSUE_TYPE" ]; then
+            echo "::error::Could not determine the Jira issue type for '$ISSUE_KEY'."
+            cat response.json || true
+            exit 1
+          fi
+          echo "Issue '$ISSUE_KEY' exists. Type: '$ISSUE_TYPE'."
+
+          # Hotfix path: a PR labeled hotfix must map to one of the allowed bypass
+          # issue types (comma-separated in JIRA_HOTFIX_ISSUE_TYPE, case-insensitive).
+          if [ "$HAS_HOTFIX_LABEL" = "true" ]; then
+            echo "PR has the '$HOTFIX_LABEL' label; checking type '$ISSUE_TYPE' against allowed: $JIRA_HOTFIX_ISSUE_TYPE."
+            MATCHED=0
+            IFS=',' read -ra ALLOWED <<< "$JIRA_HOTFIX_ISSUE_TYPE"
+            for t in "${ALLOWED[@]}"; do
+              t_trimmed="$(echo "$t" | xargs)"
+              if [ "${ISSUE_TYPE,,}" = "${t_trimmed,,}" ]; then
+                MATCHED=1
+                break
+              fi
+            done
+            if [ "$MATCHED" = "1" ]; then
+              echo "Issue type '$ISSUE_TYPE' allowed for bypass; SonarQube will be skipped."
+              echo "skip_sonar=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::PR labeled '$HOTFIX_LABEL' but Jira issue type is '$ISSUE_TYPE', not one of: $JIRA_HOTFIX_ISSUE_TYPE."
+              exit 1
+            fi
+          fi
+
       # Pull a coverage report if the caller uploaded one (artifact "coverage").
       # Language-agnostic: repos without coverage have no artifact and skip this.
       - name: Download coverage artifact
+        if: steps.jira.outputs.skip_sonar != 'true'
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
@@ -71,6 +194,7 @@ jobs:
           path: .
 
       - name: SonarQube Scan
+        if: steps.jira.outputs.skip_sonar != 'true'
         run: |
           sonar-scanner \
             -Dsonar.dependencyCheck.securityHotspot=true \
