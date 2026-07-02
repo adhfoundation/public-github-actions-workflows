@@ -28,6 +28,11 @@ on:
         required: false
         type: string
         default: "hotfix"
+      hotfix_branch_prefix:
+        description: "Branch name prefix that also triggers the hotfix flow (empty to disable)"
+        required: false
+        type: string
+        default: "hotfix/"
       jira_hotfix_issue_type:
         description: "Comma-separated Jira issuetype.name values that allow bypassing Sonar (case-insensitive)"
         required: false
@@ -75,6 +80,11 @@ on:
         required: false
         type: string
         default: "hotfix"
+      hotfix_branch_prefix:
+        description: "Branch name prefix that also triggers the hotfix flow (empty to disable)"
+        required: false
+        type: string
+        default: "hotfix/"
       jira_hotfix_issue_type:
         description: "Comma-separated Jira issuetype.name values that allow bypassing Sonar (case-insensitive)"
         required: false
@@ -117,6 +127,7 @@ jobs:
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           HOTFIX_LABEL: ${{ inputs.hotfix_label }}
+          HOTFIX_BRANCH_PREFIX: ${{ inputs.hotfix_branch_prefix }}
           JIRA_HOTFIX_ISSUE_TYPE: ${{ inputs.jira_hotfix_issue_type }}
           HEAD_REF: ${{ github.head_ref }}
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -163,10 +174,20 @@ jobs:
           fi
           echo "Issue '$ISSUE_KEY' exists. Type: '$ISSUE_TYPE'."
 
-          # Hotfix path: a PR labeled hotfix must map to one of the allowed bypass
-          # issue types (comma-separated in JIRA_HOTFIX_ISSUE_TYPE, case-insensitive).
+          # Hotfix path: triggered by the hotfix label OR a hotfix branch prefix.
+          # The issue type must then match one of the allowed bypass types
+          # (comma-separated in JIRA_HOTFIX_ISSUE_TYPE, case-insensitive).
+          IS_HOTFIX="false"
           if [ "$HAS_HOTFIX_LABEL" = "true" ]; then
-            echo "PR has the '$HOTFIX_LABEL' label; checking type '$ISSUE_TYPE' against allowed: $JIRA_HOTFIX_ISSUE_TYPE."
+            IS_HOTFIX="true"
+            echo "PR has the '$HOTFIX_LABEL' label."
+          elif [ -n "$HOTFIX_BRANCH_PREFIX" ] && [ "${HEAD_REF#"$HOTFIX_BRANCH_PREFIX"}" != "$HEAD_REF" ]; then
+            IS_HOTFIX="true"
+            echo "Branch '$HEAD_REF' starts with '$HOTFIX_BRANCH_PREFIX'."
+          fi
+
+          if [ "$IS_HOTFIX" = "true" ]; then
+            echo "Hotfix flow: checking type '$ISSUE_TYPE' against allowed: $JIRA_HOTFIX_ISSUE_TYPE."
             MATCHED=0
             IFS=',' read -ra ALLOWED <<< "$JIRA_HOTFIX_ISSUE_TYPE"
             for t in "${ALLOWED[@]}"; do
@@ -180,7 +201,7 @@ jobs:
               echo "Issue type '$ISSUE_TYPE' allowed for bypass; SonarQube will be skipped."
               echo "skip_sonar=true" >> "$GITHUB_OUTPUT"
             else
-              echo "::error::PR labeled '$HOTFIX_LABEL' but Jira issue type is '$ISSUE_TYPE', not one of: $JIRA_HOTFIX_ISSUE_TYPE."
+              echo "::error::Hotfix flow triggered (label or branch prefix) but Jira issue type is '$ISSUE_TYPE', not one of: $JIRA_HOTFIX_ISSUE_TYPE."
               exit 1
             fi
           fi
