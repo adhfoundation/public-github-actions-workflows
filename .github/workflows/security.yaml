@@ -199,8 +199,8 @@ jobs:
               fi
             done
             if [ "$MATCHED" = "1" ]; then
-              echo "Issue type '$ISSUE_TYPE' allowed for bypass; SonarQube will be skipped."
-              echo "skip_sonar=true" >> "$GITHUB_OUTPUT"
+              echo "Issue type '$ISSUE_TYPE' allowed for bypass; the quality gate will not block."
+              echo "bypass=true" >> "$GITHUB_OUTPUT"
             else
               echo "::error::Hotfix flow triggered (label or branch prefix) but Jira issue type is '$ISSUE_TYPE', not one of: $JIRA_HOTFIX_ISSUE_TYPE."
               exit 1
@@ -208,7 +208,6 @@ jobs:
           fi
 
       - name: Download coverage artifact
-        if: steps.jira.outputs.skip_sonar != 'true'
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
@@ -217,12 +216,11 @@ jobs:
 
       - name: SonarQube Scan
         id: sonar
-        if: steps.jira.outputs.skip_sonar != 'true'
         run: |
           sonar-scanner \
             -Dsonar.dependencyCheck.securityHotspot=true \
             -Dsonar.dependencyCheck.summarize=true \
-            -Dsonar.qualitygate.wait=${{ inputs.fail_on_quality_gate }} \
+            -Dsonar.qualitygate.wait=${{ steps.jira.outputs.bypass == 'true' && 'false' || inputs.fail_on_quality_gate }} \
             -Dsonar.projectKey=$COMPANY-$APPLICATION_NAME \
             -Dsonar.projectName=$COMPANY-$APPLICATION_NAME \
             -Dsonar.plugins.downloadOnlyRequired=true \
@@ -236,7 +234,7 @@ jobs:
             -Dsonar.exclusions="chart/**,node_modules/**,dist/**,coverage/**${{ inputs.sonar_exclusions != '' && format(',{0}', inputs.sonar_exclusions) || '' }}"
 
       - name: Report new code issues
-        if: ${{ !cancelled() && steps.jira.outputs.skip_sonar != 'true' && steps.sonar.outcome != 'skipped' }}
+        if: ${{ !cancelled() && steps.sonar.outcome != 'skipped' }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_FOUNDATION_TOKEN }}
           PROJECT_KEY: ${{ github.repository_owner }}-${{ github.event.repository.name }}
