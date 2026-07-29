@@ -28,11 +28,11 @@ on:
         required: false
         type: string
         default: "hotfix"
-      hotfix_branch_prefix:
-        description: "Branch name prefix that also triggers the hotfix flow (empty to disable)"
+      bypass_branches_prefix:
+        description: "Comma-separated branch prefixes eligible for the Sonar bypass (empty to disable)"
         required: false
         type: string
-        default: "hotfix/"
+        default: "hotfix/,bugfix/,fix/"
       allow_hotfix_bypass:
         description: "Allow a validated hotfix (label or branch prefix) to skip the SonarQube scan"
         required: false
@@ -42,7 +42,7 @@ on:
         description: "Comma-separated Jira issuetype.name values that allow bypassing Sonar (case-insensitive)"
         required: false
         type: string
-        default: "Hotfix,Bugfix"
+        default: "Hotfix,Bugfix,Fix"
       enable_jira_validation:
         description: "Validate the linked Jira issue on pull requests"
         required: false
@@ -85,11 +85,11 @@ on:
         required: false
         type: string
         default: "hotfix"
-      hotfix_branch_prefix:
-        description: "Branch name prefix that also triggers the hotfix flow (empty to disable)"
+      bypass_branches_prefix:
+        description: "Comma-separated branch prefixes eligible for the Sonar bypass (empty to disable)"
         required: false
         type: string
-        default: "hotfix/"
+        default: "hotfix/,bugfix/,fix/"
       allow_hotfix_bypass:
         description: "Allow a validated hotfix (label or branch prefix) to skip the SonarQube scan"
         required: false
@@ -99,7 +99,7 @@ on:
         description: "Comma-separated Jira issuetype.name values that allow bypassing Sonar (case-insensitive)"
         required: false
         type: string
-        default: "Hotfix,Bugfix"
+        default: "Hotfix,Bugfix,Fix"
       enable_jira_validation:
         description: "Validate the linked Jira issue on pull requests"
         required: false
@@ -135,7 +135,7 @@ jobs:
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           HOTFIX_LABEL: ${{ inputs.hotfix_label }}
-          HOTFIX_BRANCH_PREFIX: ${{ inputs.hotfix_branch_prefix }}
+          BYPASS_BRANCHES_PREFIX: ${{ inputs.bypass_branches_prefix }}
           ALLOW_HOTFIX_BYPASS: ${{ inputs.allow_hotfix_bypass }}
           JIRA_HOTFIX_ISSUE_TYPE: ${{ inputs.jira_hotfix_issue_type }}
           HEAD_REF: ${{ github.head_ref }}
@@ -182,9 +182,16 @@ jobs:
             if [ "$HAS_HOTFIX_LABEL" = "true" ]; then
               IS_HOTFIX="true"
               echo "PR has the '$HOTFIX_LABEL' label."
-            elif [ -n "$HOTFIX_BRANCH_PREFIX" ] && [ "${HEAD_REF#"$HOTFIX_BRANCH_PREFIX"}" != "$HEAD_REF" ]; then
-              IS_HOTFIX="true"
-              echo "Branch '$HEAD_REF' starts with '$HOTFIX_BRANCH_PREFIX'."
+            else
+              IFS=',' read -ra PREFIXES <<< "$BYPASS_BRANCHES_PREFIX"
+              for p in "${PREFIXES[@]}"; do
+                p_trimmed="$(echo "$p" | xargs)"
+                if [ -n "$p_trimmed" ] && [ "${HEAD_REF#"$p_trimmed"}" != "$HEAD_REF" ]; then
+                  IS_HOTFIX="true"
+                  echo "Branch '$HEAD_REF' starts with '$p_trimmed'."
+                  break
+                fi
+              done
             fi
           else
             echo "Hotfix bypass disabled (allow_hotfix_bypass=false); SonarQube will run."
