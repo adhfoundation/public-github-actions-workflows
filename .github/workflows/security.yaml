@@ -127,8 +127,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Always confirm the PR is backed by a real Jira issue. If the PR carries
-      # the hotfix label and the issue is a hotfix type, SonarQube is skipped.
       - name: Validate Jira issue
         id: jira
         if: github.event_name == 'pull_request' && inputs.enable_jira_validation
@@ -147,9 +145,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Extract the Jira issue key from the branch name and PR title.
-          # `|| true` keeps a no-match from tripping `set -e`/`pipefail` so the
-          # friendly error below is what surfaces.
           ISSUE_KEY=$(printf '%s %s' "$HEAD_REF" "$PR_TITLE" \
             | grep -oiE '[A-Z][A-Z0-9]+-[0-9]+' | head -n 1 \
             | tr '[:lower:]' '[:upper:]' || true)
@@ -160,7 +155,6 @@ jobs:
           fi
           echo "Jira issue key: $ISSUE_KEY"
 
-          # Confirm the issue actually exists (guards against fake references)
           HTTP=$(curl -sS -o response.json -w '%{http_code}' \
             --user "$JIRA_USER_EMAIL:$JIRA_API_TOKEN" \
             -H "Accept: application/json" \
@@ -172,8 +166,6 @@ jobs:
             exit 1
           fi
 
-          # Log the returned fields so the real issue type is visible in the run
-          # (useful to discover the correct type when the check below rejects it).
           echo "Jira API response for '$ISSUE_KEY':"
           jq '.fields | {issuetype: .issuetype.name, status: .status.name}' response.json || cat response.json
 
@@ -185,9 +177,6 @@ jobs:
           fi
           echo "Issue '$ISSUE_KEY' exists. Type: '$ISSUE_TYPE'."
 
-          # Hotfix path: triggered by the hotfix label OR a hotfix branch prefix.
-          # The issue type must then match one of the allowed bypass types
-          # (comma-separated in JIRA_HOTFIX_ISSUE_TYPE, case-insensitive).
           IS_HOTFIX="false"
           if [ "$ALLOW_HOTFIX_BYPASS" = "true" ]; then
             if [ "$HAS_HOTFIX_LABEL" = "true" ]; then
@@ -221,8 +210,6 @@ jobs:
             fi
           fi
 
-      # Pull a coverage report if the caller uploaded one (artifact "coverage").
-      # Language-agnostic: repos without coverage have no artifact and skip this.
       - name: Download coverage artifact
         if: steps.jira.outputs.skip_sonar != 'true'
         uses: actions/download-artifact@v4
@@ -249,3 +236,98 @@ jobs:
             -Dsonar.go.coverage.reportPaths=coverage.out \
             ${{ github.event_name == 'pull_request' && format('-Dsonar.pullrequest.key={0} -Dsonar.pullrequest.branch={1} -Dsonar.pullrequest.base={2}', github.event.pull_request.number, github.head_ref, github.base_ref) || '' }} \
             -Dsonar.exclusions="chart/**,node_modules/**,dist/**,coverage/**${{ inputs.sonar_exclusions != '' && format(',{0}', inputs.sonar_exclusions) || '' }}"
+
+      - name: Report new code issues
+        if: steps.jira.outputs.skip_sonar != 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_FOUNDATION_TOKEN }}
+          PROJECT_KEY: ${{ github.repository_owner }}-${{ github.event.repository.name }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+          PR_KEY: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          HOST="${SONAR_HOST_URL%/}"
+
+          REPORT="${GITHUB_WORKSPACE}/.scannerwork/report-task.txt"
+          if [ ! -f "$REPORT" ]; then
+            echo "::error::report-task.txt not found; cannot confirm the analysis finished."
+            exit 1
+          fi
+          CE_TASK_ID=$(grep '^ceTaskId=' "$REPORT" | cut -d= -f2-)
+          CE_READY=0
+          for _ in $(seq 1 30); do
+            CE_STATUS=$(curl -sS -u "$SONAR_TOKEN:" "$HOST/api/ce/task?id=$CE_TASK_ID" | jq -r '.task.status // "UNKNOWN"')
+            echo "Compute Engine task status: $CE_STATUS"
+            case "$CE_STATUS" in
+              SUCCESS) CE_READY=1; break ;;
+              FAILED|CANCELED) echo "::error::Sonar analysis task $CE_STATUS."; exit 1 ;;
+              *) sleep 5 ;;
+            esac
+          done
+          if [ "$CE_READY" != "1" ]; then
+            echo "::error::Timed out waiting for the Sonar analysis to finish."
+            exit 1
+          fi
+
+          if [ "$IS_PR" = "true" ]; then
+            SCOPE="pullRequest=$PR_KEY"
+          else
+            SCOPE="inNewCodePeriod=true"
+          fi
+
+          RESPONSE=$(curl -sS -u "$SONAR_TOKEN:" \
+            "$HOST/api/issues/search?componentKeys=$PROJECT_KEY&$SCOPE&statuses=OPEN,CONFIRMED&ps=500")
+
+          if ! echo "$RESPONSE" | jq -e 'has("issues")' >/dev/null 2>&1; then
+            echo "::error::Unexpected response from the Sonar issues API:"
+            echo "$RESPONSE"
+            exit 1
+          fi
+
+          TOTAL=$(echo "$RESPONSE" | jq '.total')
+          if [ "$TOTAL" -gt 500 ]; then
+            echo "::warning::$TOTAL new-code issues found; only the first 500 were evaluated."
+          fi
+
+          ISSUES=$(echo "$RESPONSE" | jq '
+            def category($tags; $imps):
+              if   ($tags | index("duplicate"))      then "DUPLICATION"
+              elif ($tags | index("brain-overload")) then "COMPLEXITY"
+              elif ($tags | index("dead-store"))     then "DEAD_CODE"
+              else ($imps[0].softwareQuality // "OTHER") end;
+            [ .issues[] | . as $i | (($i.impacts // [])) as $imps | (($i.tags // [])) as $tags | {
+                category: category($tags; $imps),
+                quality:  ($imps[0].softwareQuality // "?"),
+                severity: ($imps[0].severity // "?"),
+                rule:     $i.rule,
+                file:     ($i.component | sub("^[^:]+:"; "")),
+                line:     ($i.line // 0),
+                message:  $i.message,
+                tags:     $tags
+              } ]')
+
+          echo "New code issues: $TOTAL"
+          echo "$ISSUES" | jq .
+
+          echo "$ISSUES" | jq -r '.[]
+            | "- \(.category) | \(.quality)/\(.severity) | \(.rule) | \(.file):\(.line) — \(.message)"'
+
+          {
+            echo "## SonarQube — New code issues ($TOTAL)"
+            echo ""
+            if [ "$TOTAL" -eq 0 ]; then
+              echo "No issues found in the new code."
+            else
+              echo "| Category | Quality | Severity | Rule | Location | Message |"
+              echo "|---|---|---|---|---|---|"
+              echo "$ISSUES" | jq -r '.[] | "| \(.category) | \(.quality) | \(.severity) | \(.rule) | \(.file):\(.line) | \(.message | gsub("\\|"; "\\|")) |"'
+              echo ""
+              echo "### By category"
+              echo "$ISSUES" | jq -r 'group_by(.category)[] | "- **\(.[0].category)**: \(length)"'
+              echo ""
+              echo "### By severity"
+              echo "$ISSUES" | jq -r 'group_by(.severity)[] | "- **\(.[0].severity)**: \(length)"'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
