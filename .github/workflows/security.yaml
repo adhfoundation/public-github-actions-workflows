@@ -216,6 +216,7 @@ jobs:
           path: .
 
       - name: SonarQube Scan
+        id: sonar
         if: steps.jira.outputs.skip_sonar != 'true'
         run: |
           sonar-scanner \
@@ -235,7 +236,7 @@ jobs:
             -Dsonar.exclusions="chart/**,node_modules/**,dist/**,coverage/**${{ inputs.sonar_exclusions != '' && format(',{0}', inputs.sonar_exclusions) || '' }}"
 
       - name: Report new code issues
-        if: steps.jira.outputs.skip_sonar != 'true'
+        if: ${{ !cancelled() && steps.jira.outputs.skip_sonar != 'true' && steps.sonar.outcome != 'skipped' }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_FOUNDATION_TOKEN }}
           PROJECT_KEY: ${{ github.repository_owner }}-${{ github.event.repository.name }}
