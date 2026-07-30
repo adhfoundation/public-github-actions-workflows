@@ -33,6 +33,11 @@ on:
         required: false
         type: number
         default: 10
+      comment_on_pr:
+        description: "Post a sticky comment on the PR with the new-code report and gate decision"
+        required: false
+        type: boolean
+        default: true
       hotfix_label:
         description: "PR label that triggers the hotfix flow"
         required: false
@@ -100,6 +105,11 @@ on:
         required: false
         type: number
         default: 10
+      comment_on_pr:
+        description: "Post a sticky comment on the PR with the new-code report and gate decision"
+        required: false
+        type: boolean
+        default: true
       hotfix_label:
         description: "PR label that triggers the hotfix flow"
         required: false
@@ -274,6 +284,9 @@ jobs:
           GATE_BLOCK_QUALITIES: ${{ inputs.gate_block_qualities }}
           GATE_BLOCK_SEVERITIES: ${{ inputs.gate_block_severities }}
           GATE_MAX_MAINTAINABILITY: ${{ inputs.gate_max_maintainability }}
+          COMMENT_ON_PR: ${{ inputs.comment_on_pr }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -385,6 +398,54 @@ jobs:
           if [ "$GATE_MAX_MAINTAINABILITY" -ge 0 ] && [ "$MAINT" -gt "$GATE_MAX_MAINTAINABILITY" ]; then
             echo "::error::$MAINT maintainability issue(s) exceed the budget of $GATE_MAX_MAINTAINABILITY."
             FAIL=1
+          fi
+
+          if [ "$FAIL" = "1" ] && [ "$BYPASS" = "true" ]; then
+            DECISION="⚠️ BYPASSED (hotfix)"
+          elif [ "$FAIL" = "1" ]; then
+            DECISION="❌ BLOCKED"
+          else
+            DECISION="✅ PASS"
+          fi
+
+          if [ "$COMMENT_ON_PR" = "true" ] && [ "$IS_PR" = "true" ]; then
+            MARKER="<!-- sonar-new-code-report -->"
+            {
+              echo "$MARKER"
+              echo "## 🔎 SonarQube — New code report"
+              echo ""
+              echo "**Decision:** $DECISION"
+              echo ""
+              echo "- Risk ($GATE_BLOCK_QUALITIES @ $GATE_BLOCK_SEVERITIES): **$RISK**"
+              echo "- Maintainability: **$MAINT** (budget: $GATE_MAX_MAINTAINABILITY)"
+              echo "- Total new-code issues: **$TOTAL**"
+              echo ""
+              if [ "$TOTAL" -eq 0 ]; then
+                echo "No issues found in the new code."
+              else
+                echo "| Category | Quality | Severity | Rule | Location | Message |"
+                echo "|---|---|---|---|---|---|"
+                echo "$ISSUES" | jq -r '.[] | "| \(.category) | \(.quality) | \(.severity) | \(.rule) | \(.file):\(.line) | \(.message | gsub("\\|"; "\\|")) |"'
+              fi
+            } > comment.md
+
+            BODY=$(jq -Rs . < comment.md)
+            API="https://api.github.com/repos/$REPO"
+            EXISTING=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$API/issues/$PR_KEY/comments?per_page=100" \
+              | jq -r --arg m "$MARKER" '[.[] | select(.body | contains($m))][0].id // empty' || true)
+
+            if [ -n "$EXISTING" ]; then
+              curl -sS -X PATCH -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "$API/issues/comments/$EXISTING" -d "{\"body\": $BODY}" >/dev/null \
+                && echo "Updated PR comment $EXISTING." \
+                || echo "::warning::Could not update the PR comment (check pull-requests: write permission)."
+            else
+              curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "$API/issues/$PR_KEY/comments" -d "{\"body\": $BODY}" >/dev/null \
+                && echo "Created PR comment." \
+                || echo "::warning::Could not create the PR comment (check pull-requests: write permission)."
+            fi
           fi
 
           if [ "$FAIL" = "1" ]; then
