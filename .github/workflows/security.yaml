@@ -13,11 +13,16 @@ on:
         required: false
         type: string
         default: ""
-      fail_on_quality_gate:
-        description: "Fail the job if the SonarQube quality gate fails"
+      gate_block_qualities:
+        description: "Software qualities with zero tolerance in new code (comma-separated)"
         required: false
-        type: boolean
-        default: true
+        type: string
+        default: "SECURITY,RELIABILITY"
+      gate_block_severities:
+        description: "Severities that block for gate_block_qualities (comma-separated)"
+        required: false
+        type: string
+        default: "BLOCKER,HIGH"
       hotfix_label:
         description: "PR label that triggers the hotfix flow"
         required: false
@@ -65,11 +70,16 @@ on:
         required: false
         type: string
         default: ""
-      fail_on_quality_gate:
-        description: "Fail the job if the SonarQube quality gate fails"
+      gate_block_qualities:
+        description: "Software qualities with zero tolerance in new code (comma-separated)"
         required: false
-        type: boolean
-        default: true
+        type: string
+        default: "SECURITY,RELIABILITY"
+      gate_block_severities:
+        description: "Severities that block for gate_block_qualities (comma-separated)"
+        required: false
+        type: string
+        default: "BLOCKER,HIGH"
       hotfix_label:
         description: "PR label that triggers the hotfix flow"
         required: false
@@ -199,8 +209,8 @@ jobs:
               fi
             done
             if [ "$MATCHED" = "1" ]; then
-              echo "Issue type '$ISSUE_TYPE' allowed for bypass; SonarQube will be skipped."
-              echo "skip_sonar=true" >> "$GITHUB_OUTPUT"
+              echo "Issue type '$ISSUE_TYPE' allowed for bypass; the quality gate will not block."
+              echo "bypass=true" >> "$GITHUB_OUTPUT"
             else
               echo "::error::Hotfix flow triggered (label or branch prefix) but Jira issue type is '$ISSUE_TYPE', not one of: $JIRA_HOTFIX_ISSUE_TYPE."
               exit 1
@@ -208,7 +218,6 @@ jobs:
           fi
 
       - name: Download coverage artifact
-        if: steps.jira.outputs.skip_sonar != 'true'
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
@@ -217,12 +226,11 @@ jobs:
 
       - name: SonarQube Scan
         id: sonar
-        if: steps.jira.outputs.skip_sonar != 'true'
         run: |
           sonar-scanner \
             -Dsonar.dependencyCheck.securityHotspot=true \
             -Dsonar.dependencyCheck.summarize=true \
-            -Dsonar.qualitygate.wait=${{ inputs.fail_on_quality_gate }} \
+            -Dsonar.qualitygate.wait=false \
             -Dsonar.projectKey=$COMPANY-$APPLICATION_NAME \
             -Dsonar.projectName=$COMPANY-$APPLICATION_NAME \
             -Dsonar.plugins.downloadOnlyRequired=true \
@@ -236,12 +244,17 @@ jobs:
             -Dsonar.exclusions="chart/**,node_modules/**,dist/**,coverage/**${{ inputs.sonar_exclusions != '' && format(',{0}', inputs.sonar_exclusions) || '' }}"
 
       - name: Report new code issues
-        if: ${{ !cancelled() && steps.jira.outputs.skip_sonar != 'true' && steps.sonar.outcome != 'skipped' }}
+        if: ${{ !cancelled() && steps.sonar.outcome != 'skipped' }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_FOUNDATION_TOKEN }}
           PROJECT_KEY: ${{ github.repository_owner }}-${{ github.event.repository.name }}
           IS_PR: ${{ github.event_name == 'pull_request' }}
           PR_KEY: ${{ github.event.pull_request.number }}
+          BYPASS: ${{ steps.jira.outputs.bypass }}
+          GATE_BLOCK_QUALITIES: ${{ inputs.gate_block_qualities }}
+          GATE_BLOCK_SEVERITIES: ${{ inputs.gate_block_severities }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -329,3 +342,83 @@ jobs:
               echo "$ISSUES" | jq -r 'group_by(.severity)[] | "- **\(.[0].severity)**: \(length)"'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+          Q_JSON=$(printf '%s' "$GATE_BLOCK_QUALITIES" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$";"") | ascii_upcase) | map(select(length > 0))')
+          S_JSON=$(printf '%s' "$GATE_BLOCK_SEVERITIES" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$";"") | ascii_upcase) | map(select(length > 0))')
+
+          RISK=$(echo "$RESPONSE" | jq --argjson q "$Q_JSON" --argjson s "$S_JSON" '
+            [ .issues[] | select(any(.impacts[]?; . as $imp | ($q | index($imp.softwareQuality)) and ($s | index($imp.severity)))) ] | length')
+          MAINT=$(echo "$RESPONSE" | jq '
+            [ .issues[] | select(any(.impacts[]?; .softwareQuality == "MAINTAINABILITY")) ] | length')
+
+          echo "Gate — risk issues ($GATE_BLOCK_QUALITIES @ $GATE_BLOCK_SEVERITIES): $RISK"
+          echo "Gate — maintainability issues: $MAINT (report only)"
+
+          FAIL=0
+          if [ "$TOTAL" -gt 500 ]; then
+            echo "::error::$TOTAL new-code issues exceed the 500 evaluated; failing closed (cannot guarantee full coverage)."
+            FAIL=1
+          fi
+          if [ "$RISK" -gt 0 ]; then
+            echo "::error::$RISK new risk issue(s) ($GATE_BLOCK_QUALITIES at $GATE_BLOCK_SEVERITIES) — not allowed."
+            FAIL=1
+          fi
+
+          if [ "$FAIL" = "1" ] && [ "$BYPASS" = "true" ]; then
+            DECISION="⚠️ BYPASSED (hotfix)"
+          elif [ "$FAIL" = "1" ]; then
+            DECISION="❌ BLOCKED"
+          else
+            DECISION="✅ PASS"
+          fi
+
+          if [ "$IS_PR" = "true" ]; then
+            MARKER="<!-- sonar-new-code-report -->"
+            {
+              echo "$MARKER"
+              echo "## 🔎 SonarQube — New code report"
+              echo ""
+              echo "**Decision:** $DECISION"
+              echo ""
+              echo "- Risk ($GATE_BLOCK_QUALITIES @ $GATE_BLOCK_SEVERITIES): **$RISK**"
+              echo "- Maintainability: **$MAINT** (report only)"
+              echo "- Total new-code issues: **$TOTAL**"
+              echo ""
+              if [ "$TOTAL" -eq 0 ]; then
+                echo "No issues found in the new code."
+              else
+                echo "| Category | Quality | Severity | Rule | Location | Message |"
+                echo "|---|---|---|---|---|---|"
+                echo "$ISSUES" | jq -r '.[] | "| \(.category) | \(.quality) | \(.severity) | \(.rule) | \(.file):\(.line) | \(.message | gsub("\\|"; "\\|")) |"'
+              fi
+            } > comment.md
+
+            BODY=$(jq -Rs . < comment.md)
+            API="https://api.github.com/repos/$REPO"
+            EXISTING=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$API/issues/$PR_KEY/comments?per_page=100" \
+              | jq -r --arg m "$MARKER" '[.[] | select(.body | contains($m))][0].id // empty' || true)
+
+            if [ -n "$EXISTING" ]; then
+              curl -sS -X PATCH -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "$API/issues/comments/$EXISTING" -d "{\"body\": $BODY}" >/dev/null \
+                && echo "Updated PR comment $EXISTING." \
+                || echo "::warning::Could not update the PR comment (check pull-requests: write permission)."
+            else
+              curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "$API/issues/$PR_KEY/comments" -d "{\"body\": $BODY}" >/dev/null \
+                && echo "Created PR comment." \
+                || echo "::warning::Could not create the PR comment (check pull-requests: write permission)."
+            fi
+          fi
+
+          if [ "$FAIL" = "1" ]; then
+            if [ "$BYPASS" = "true" ]; then
+              echo "::warning::New-code gate would block, but the hotfix bypass is active — not failing."
+            else
+              echo "::error::New-code gate failed."
+              exit 1
+            fi
+          else
+            echo "New-code gate passed."
+          fi
