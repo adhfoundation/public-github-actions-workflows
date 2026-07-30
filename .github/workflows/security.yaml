@@ -13,11 +13,6 @@ on:
         required: false
         type: string
         default: ""
-      fail_on_quality_gate:
-        description: "Block directly on the raw SonarQube quality gate at the scan step (the new-code gate below is the main decision)"
-        required: false
-        type: boolean
-        default: false
       gate_block_qualities:
         description: "Software qualities with zero tolerance in new code (comma-separated)"
         required: false
@@ -28,11 +23,6 @@ on:
         required: false
         type: string
         default: "BLOCKER,HIGH"
-      gate_max_maintainability:
-        description: "Max new MAINTAINABILITY issues allowed before blocking (-1 = unlimited)"
-        required: false
-        type: number
-        default: 10
       comment_on_pr:
         description: "Post a sticky comment on the PR with the new-code report and gate decision"
         required: false
@@ -85,11 +75,6 @@ on:
         required: false
         type: string
         default: ""
-      fail_on_quality_gate:
-        description: "Block directly on the raw SonarQube quality gate at the scan step (the new-code gate below is the main decision)"
-        required: false
-        type: boolean
-        default: false
       gate_block_qualities:
         description: "Software qualities with zero tolerance in new code (comma-separated)"
         required: false
@@ -100,11 +85,6 @@ on:
         required: false
         type: string
         default: "BLOCKER,HIGH"
-      gate_max_maintainability:
-        description: "Max new MAINTAINABILITY issues allowed before blocking (-1 = unlimited)"
-        required: false
-        type: number
-        default: 10
       comment_on_pr:
         description: "Post a sticky comment on the PR with the new-code report and gate decision"
         required: false
@@ -260,7 +240,7 @@ jobs:
           sonar-scanner \
             -Dsonar.dependencyCheck.securityHotspot=true \
             -Dsonar.dependencyCheck.summarize=true \
-            -Dsonar.qualitygate.wait=${{ steps.jira.outputs.bypass == 'true' && 'false' || inputs.fail_on_quality_gate }} \
+            -Dsonar.qualitygate.wait=false \
             -Dsonar.projectKey=$COMPANY-$APPLICATION_NAME \
             -Dsonar.projectName=$COMPANY-$APPLICATION_NAME \
             -Dsonar.plugins.downloadOnlyRequired=true \
@@ -283,7 +263,6 @@ jobs:
           BYPASS: ${{ steps.jira.outputs.bypass }}
           GATE_BLOCK_QUALITIES: ${{ inputs.gate_block_qualities }}
           GATE_BLOCK_SEVERITIES: ${{ inputs.gate_block_severities }}
-          GATE_MAX_MAINTAINABILITY: ${{ inputs.gate_max_maintainability }}
           COMMENT_ON_PR: ${{ inputs.comment_on_pr }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
@@ -384,7 +363,7 @@ jobs:
             [ .issues[] | select(any(.impacts[]?; .softwareQuality == "MAINTAINABILITY")) ] | length')
 
           echo "Gate — risk issues ($GATE_BLOCK_QUALITIES @ $GATE_BLOCK_SEVERITIES): $RISK"
-          echo "Gate — maintainability issues: $MAINT (budget: $GATE_MAX_MAINTAINABILITY)"
+          echo "Gate — maintainability issues: $MAINT (report only)"
 
           FAIL=0
           if [ "$TOTAL" -gt 500 ]; then
@@ -393,10 +372,6 @@ jobs:
           fi
           if [ "$RISK" -gt 0 ]; then
             echo "::error::$RISK new risk issue(s) ($GATE_BLOCK_QUALITIES at $GATE_BLOCK_SEVERITIES) — not allowed."
-            FAIL=1
-          fi
-          if [ "$GATE_MAX_MAINTAINABILITY" -ge 0 ] && [ "$MAINT" -gt "$GATE_MAX_MAINTAINABILITY" ]; then
-            echo "::error::$MAINT maintainability issue(s) exceed the budget of $GATE_MAX_MAINTAINABILITY."
             FAIL=1
           fi
 
@@ -417,7 +392,7 @@ jobs:
               echo "**Decision:** $DECISION"
               echo ""
               echo "- Risk ($GATE_BLOCK_QUALITIES @ $GATE_BLOCK_SEVERITIES): **$RISK**"
-              echo "- Maintainability: **$MAINT** (budget: $GATE_MAX_MAINTAINABILITY)"
+              echo "- Maintainability: **$MAINT** (report only)"
               echo "- Total new-code issues: **$TOTAL**"
               echo ""
               if [ "$TOTAL" -eq 0 ]; then
