@@ -230,7 +230,7 @@ jobs:
           sonar-scanner \
             -Dsonar.dependencyCheck.securityHotspot=true \
             -Dsonar.dependencyCheck.summarize=true \
-            -Dsonar.qualitygate.wait=false \
+            -Dsonar.qualitygate.wait=${{ steps.jira.outputs.bypass == 'true' && 'false' || 'true' }} \
             -Dsonar.projectKey=$COMPANY-$APPLICATION_NAME \
             -Dsonar.projectName=$COMPANY-$APPLICATION_NAME \
             -Dsonar.plugins.downloadOnlyRequired=true \
@@ -255,6 +255,7 @@ jobs:
           GATE_BLOCK_SEVERITIES: ${{ inputs.gate_block_severities }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          SONAR_OUTCOME: ${{ steps.sonar.outcome }}
         shell: bash
         run: |
           set -euo pipefail
@@ -364,9 +365,9 @@ jobs:
             FAIL=1
           fi
 
-          if [ "$FAIL" = "1" ] && [ "$BYPASS" = "true" ]; then
+          if [ "$BYPASS" = "true" ] && { [ "$FAIL" = "1" ] || [ "$SONAR_OUTCOME" = "failure" ]; }; then
             DECISION="⚠️ BYPASSED (hotfix)"
-          elif [ "$FAIL" = "1" ]; then
+          elif [ "$FAIL" = "1" ] || [ "$SONAR_OUTCOME" = "failure" ]; then
             DECISION="❌ BLOCKED"
           else
             DECISION="✅ PASS"
