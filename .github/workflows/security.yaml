@@ -14,10 +14,25 @@ on:
         type: string
         default: ""
       fail_on_quality_gate:
-        description: "Fail the job if the SonarQube quality gate fails"
+        description: "Block directly on the raw SonarQube quality gate at the scan step (the new-code gate below is the main decision)"
         required: false
         type: boolean
-        default: true
+        default: false
+      gate_block_qualities:
+        description: "Software qualities with zero tolerance in new code (comma-separated)"
+        required: false
+        type: string
+        default: "SECURITY,RELIABILITY"
+      gate_block_severities:
+        description: "Severities that block for gate_block_qualities (comma-separated)"
+        required: false
+        type: string
+        default: "BLOCKER,HIGH"
+      gate_max_maintainability:
+        description: "Max new MAINTAINABILITY issues allowed before blocking (-1 = unlimited)"
+        required: false
+        type: number
+        default: 10
       hotfix_label:
         description: "PR label that triggers the hotfix flow"
         required: false
@@ -66,10 +81,25 @@ on:
         type: string
         default: ""
       fail_on_quality_gate:
-        description: "Fail the job if the SonarQube quality gate fails"
+        description: "Block directly on the raw SonarQube quality gate at the scan step (the new-code gate below is the main decision)"
         required: false
         type: boolean
-        default: true
+        default: false
+      gate_block_qualities:
+        description: "Software qualities with zero tolerance in new code (comma-separated)"
+        required: false
+        type: string
+        default: "SECURITY,RELIABILITY"
+      gate_block_severities:
+        description: "Severities that block for gate_block_qualities (comma-separated)"
+        required: false
+        type: string
+        default: "BLOCKER,HIGH"
+      gate_max_maintainability:
+        description: "Max new MAINTAINABILITY issues allowed before blocking (-1 = unlimited)"
+        required: false
+        type: number
+        default: 10
       hotfix_label:
         description: "PR label that triggers the hotfix flow"
         required: false
@@ -240,6 +270,10 @@ jobs:
           PROJECT_KEY: ${{ github.repository_owner }}-${{ github.event.repository.name }}
           IS_PR: ${{ github.event_name == 'pull_request' }}
           PR_KEY: ${{ github.event.pull_request.number }}
+          BYPASS: ${{ steps.jira.outputs.bypass }}
+          GATE_BLOCK_QUALITIES: ${{ inputs.gate_block_qualities }}
+          GATE_BLOCK_SEVERITIES: ${{ inputs.gate_block_severities }}
+          GATE_MAX_MAINTAINABILITY: ${{ inputs.gate_max_maintainability }}
         shell: bash
         run: |
           set -euo pipefail
@@ -327,3 +361,39 @@ jobs:
               echo "$ISSUES" | jq -r 'group_by(.severity)[] | "- **\(.[0].severity)**: \(length)"'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+          Q_JSON=$(printf '%s' "$GATE_BLOCK_QUALITIES" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$";"") | ascii_upcase) | map(select(length > 0))')
+          S_JSON=$(printf '%s' "$GATE_BLOCK_SEVERITIES" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$";"") | ascii_upcase) | map(select(length > 0))')
+
+          RISK=$(echo "$RESPONSE" | jq --argjson q "$Q_JSON" --argjson s "$S_JSON" '
+            [ .issues[] | select(any(.impacts[]?; . as $imp | ($q | index($imp.softwareQuality)) and ($s | index($imp.severity)))) ] | length')
+          MAINT=$(echo "$RESPONSE" | jq '
+            [ .issues[] | select(any(.impacts[]?; .softwareQuality == "MAINTAINABILITY")) ] | length')
+
+          echo "Gate — risk issues ($GATE_BLOCK_QUALITIES @ $GATE_BLOCK_SEVERITIES): $RISK"
+          echo "Gate — maintainability issues: $MAINT (budget: $GATE_MAX_MAINTAINABILITY)"
+
+          FAIL=0
+          if [ "$TOTAL" -gt 500 ]; then
+            echo "::error::$TOTAL new-code issues exceed the 500 evaluated; failing closed (cannot guarantee full coverage)."
+            FAIL=1
+          fi
+          if [ "$RISK" -gt 0 ]; then
+            echo "::error::$RISK new risk issue(s) ($GATE_BLOCK_QUALITIES at $GATE_BLOCK_SEVERITIES) — not allowed."
+            FAIL=1
+          fi
+          if [ "$GATE_MAX_MAINTAINABILITY" -ge 0 ] && [ "$MAINT" -gt "$GATE_MAX_MAINTAINABILITY" ]; then
+            echo "::error::$MAINT maintainability issue(s) exceed the budget of $GATE_MAX_MAINTAINABILITY."
+            FAIL=1
+          fi
+
+          if [ "$FAIL" = "1" ]; then
+            if [ "$BYPASS" = "true" ]; then
+              echo "::warning::New-code gate would block, but the hotfix bypass is active — not failing."
+            else
+              echo "::error::New-code gate failed."
+              exit 1
+            fi
+          else
+            echo "New-code gate passed."
+          fi
