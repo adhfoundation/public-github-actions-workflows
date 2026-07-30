@@ -23,11 +23,6 @@ on:
         required: false
         type: string
         default: "BLOCKER,HIGH"
-      comment_on_pr:
-        description: "Post a sticky comment on the PR with the new-code report and gate decision"
-        required: false
-        type: boolean
-        default: true
       hotfix_label:
         description: "PR label that triggers the hotfix flow"
         required: false
@@ -85,11 +80,6 @@ on:
         required: false
         type: string
         default: "BLOCKER,HIGH"
-      comment_on_pr:
-        description: "Post a sticky comment on the PR with the new-code report and gate decision"
-        required: false
-        type: boolean
-        default: true
       hotfix_label:
         description: "PR label that triggers the hotfix flow"
         required: false
@@ -263,7 +253,6 @@ jobs:
           BYPASS: ${{ steps.jira.outputs.bypass }}
           GATE_BLOCK_QUALITIES: ${{ inputs.gate_block_qualities }}
           GATE_BLOCK_SEVERITIES: ${{ inputs.gate_block_severities }}
-          COMMENT_ON_PR: ${{ inputs.comment_on_pr }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -383,7 +372,7 @@ jobs:
             DECISION="✅ PASS"
           fi
 
-          if [ "$COMMENT_ON_PR" = "true" ] && [ "$IS_PR" = "true" ]; then
+          if [ "$IS_PR" = "true" ]; then
             MARKER="<!-- sonar-new-code-report -->"
             {
               echo "$MARKER"
