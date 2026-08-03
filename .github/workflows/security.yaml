@@ -303,6 +303,28 @@ jobs:
             echo "::warning::$TOTAL new-code issues found; only the first 500 were evaluated."
           fi
 
+          if [ "$IS_PR" = "true" ]; then
+            MSCOPE="&pullRequest=$PR_KEY"
+          else
+            MSCOPE=""
+          fi
+          MEASURES=$(curl -sS -u "$SONAR_TOKEN:" \
+            "$HOST/api/measures/component?component=$PROJECT_KEY&metricKeys=new_coverage,new_duplicated_lines_density,new_lines,new_bugs,new_vulnerabilities,new_code_smells,new_security_hotspots${MSCOPE}")
+          if ! echo "$MEASURES" | jq -e 'has("component")' >/dev/null 2>&1; then
+            echo "::warning::Could not read new-code measures; metrics will show as —."
+            MEASURES='{}'
+          fi
+          measure() { echo "$MEASURES" | jq -r --arg k "$1" '[.component.measures[]? | select(.metric==$k) | (.value // .period.value // (.periods[]?.value))] | (.[0] // "—")'; }
+          pct() { if [ "$1" = "—" ]; then printf '—'; else printf '%s%%' "$1"; fi; }
+          NEW_COVERAGE=$(measure new_coverage)
+          NEW_DUP=$(measure new_duplicated_lines_density)
+          NEW_LINES=$(measure new_lines)
+          NEW_BUGS=$(measure new_bugs)
+          NEW_VULN=$(measure new_vulnerabilities)
+          NEW_SMELLS=$(measure new_code_smells)
+          NEW_HOTSPOTS=$(measure new_security_hotspots)
+          echo "Metrics — coverage: $(pct "$NEW_COVERAGE") | duplication: $(pct "$NEW_DUP") | new lines: $NEW_LINES | bugs: $NEW_BUGS | vulns: $NEW_VULN | smells: $NEW_SMELLS | hotspots: $NEW_HOTSPOTS"
+
           ISSUES=$(echo "$RESPONSE" | jq '
             def category($tags; $imps):
               if   ($tags | index("duplicate"))      then "DUPLICATION"
@@ -328,6 +350,8 @@ jobs:
 
           {
             echo "## SonarQube — New code issues ($TOTAL)"
+            echo ""
+            echo "**Metrics (new code):** Coverage $(pct "$NEW_COVERAGE") · Duplication $(pct "$NEW_DUP") · New lines $NEW_LINES · Bugs $NEW_BUGS · Vulnerabilities $NEW_VULN · Code Smells $NEW_SMELLS · Hotspots $NEW_HOTSPOTS"
             echo ""
             if [ "$TOTAL" -eq 0 ]; then
               echo "No issues found in the new code."
@@ -384,6 +408,12 @@ jobs:
               echo "- Risk ($GATE_BLOCK_QUALITIES @ $GATE_BLOCK_SEVERITIES): **$RISK**"
               echo "- Maintainability: **$MAINT** (report only)"
               echo "- Total new-code issues: **$TOTAL**"
+              echo ""
+              echo "**Metrics (new code)**"
+              echo ""
+              echo "| Coverage | Duplication | New lines | Bugs | Vulnerabilities | Code Smells | Hotspots |"
+              echo "|---|---|---|---|---|---|---|"
+              echo "| $(pct "$NEW_COVERAGE") | $(pct "$NEW_DUP") | $NEW_LINES | $NEW_BUGS | $NEW_VULN | $NEW_SMELLS | $NEW_HOTSPOTS |"
               echo ""
               if [ "$TOTAL" -eq 0 ]; then
                 echo "No issues found in the new code."
