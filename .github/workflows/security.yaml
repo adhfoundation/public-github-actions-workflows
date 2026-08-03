@@ -339,6 +339,7 @@ jobs:
                 file:     ($i.component | sub("^[^:]+:"; "")),
                 line:     ($i.line // 0),
                 message:  $i.message,
+                type:     ($i.type // "?"),
                 tags:     $tags
               } ]')
 
@@ -346,7 +347,7 @@ jobs:
           echo "$ISSUES" | jq .
 
           echo "$ISSUES" | jq -r '.[]
-            | "- \(.category) | \(.quality)/\(.severity) | \(.rule) | \(.file):\(.line) — \(.message)"'
+            | "- \(.category) [\(.type)] | \(.quality)/\(.severity) | \(.rule) | \(.file):\(.line) — \(.message)"'
 
           {
             echo "## SonarQube — New code issues ($TOTAL)"
@@ -356,9 +357,9 @@ jobs:
             if [ "$TOTAL" -eq 0 ]; then
               echo "No issues found in the new code."
             else
-              echo "| Category | Quality | Severity | Rule | Location | Message |"
-              echo "|---|---|---|---|---|---|"
-              echo "$ISSUES" | jq -r '.[] | "| \(.category) | \(.quality) | \(.severity) | \(.rule) | \(.file):\(.line) | \(.message | gsub("\\|"; "\\|")) |"'
+              echo "| Category | Type | Quality | Severity | Rule | Location | Message |"
+              echo "|---|---|---|---|---|---|---|"
+              echo "$ISSUES" | jq -r '.[] | "| \(.category) | \(.type) | \(.quality) | \(.severity) | \(.rule) | \(.file):\(.line) | \(.message | gsub("\\|"; "\\|")) |"'
               echo ""
               echo "### By category"
               echo "$ISSUES" | jq -r 'group_by(.category)[] | "- **\(.[0].category)**: \(length)"'
@@ -418,9 +419,9 @@ jobs:
               if [ "$TOTAL" -eq 0 ]; then
                 echo "No issues found in the new code."
               else
-                echo "| Category | Quality | Severity | Rule | Location | Message |"
-                echo "|---|---|---|---|---|---|"
-                echo "$ISSUES" | jq -r '.[] | "| \(.category) | \(.quality) | \(.severity) | \(.rule) | \(.file):\(.line) | \(.message | gsub("\\|"; "\\|")) |"'
+                echo "| Category | Type | Quality | Severity | Rule | Location | Message |"
+                echo "|---|---|---|---|---|---|---|"
+                echo "$ISSUES" | jq -r '.[] | "| \(.category) | \(.type) | \(.quality) | \(.severity) | \(.rule) | \(.file):\(.line) | \(.message | gsub("\\|"; "\\|")) |"'
               fi
             } > comment.md
 
