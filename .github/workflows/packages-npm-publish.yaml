@@ -12,6 +12,10 @@ name: Publish NPM Package
 # resolvido automaticamente por github.repository_owner. Se o "name" do package.json não
 # bater com esse escopo, o workflow falha cedo com um erro explicando o motivo.
 #
+# Versão do Node também NÃO é input: vem de "engines.node" no package.json (aceita range,
+# ex.: ">=24 <25" — o setup-node entende semver range direto). Sem "engines.node" declarado,
+# falha cedo em vez de assumir alguma versão default.
+#
 # Rodando na branch de produção (default "main", ver input production-branch): publica com a
 # dist-tag "latest". Rodando em qualquer outra branch: publica com a dist-tag "rc" — nunca
 # "latest", pra ninguém instalar uma versão de teste sem pedir explicitamente
@@ -28,10 +32,6 @@ on:
         description: >-
           Nome da branch considerada produção. Rodando nela: dist-tag "latest". Rodando em
           qualquer outra: dist-tag "rc".
-      node-version:
-        required: false
-        type: string
-        default: "20"
       working-directory:
         required: false
         type: string
@@ -84,10 +84,22 @@ jobs:
           SCOPE="@$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
 
+      - name: Resolver versão do Node
+        id: node-version
+        working-directory: ${{ inputs.working-directory }}
+        shell: bash
+        run: |
+          VERSION=$(jq -r '.engines.node // empty' package.json)
+          if [ -z "$VERSION" ]; then
+            echo '::error title=engines.node não definido::O package.json precisa declarar "engines": { "node": "<versão ou range>" } — este workflow não assume nenhuma versão default de Node.'
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ inputs.node-version }}
+          node-version: ${{ steps.node-version.outputs.value }}
           registry-url: ${{ inputs.registry-url }}
           scope: ${{ steps.scope.outputs.scope }}
 
