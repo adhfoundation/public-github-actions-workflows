@@ -1,0 +1,139 @@
+name: Publish NPM Package
+
+# Publica um pacote npm no GitHub Packages. Sem Makefile: os comandos de install/test/build
+# são inputs com default de npm puro, sobrescrevíveis pelo chamador se o repo usar outro script.
+#
+# Versão vem sempre do package.json e este workflow NUNCA mexe nela — o dev bumpa/commita
+# a versão no próprio repo, do jeito que quiser. Não tem proteção extra aqui contra publicar
+# a mesma versão duas vezes: o próprio registry já rejeita isso sozinho (versão publicada é
+# imutável), então tentar de novo sem bumpar falha naturalmente no step de Publish.
+#
+# Escopo do pacote NÃO é configurável: é sempre "@<org do repositório>", em minúsculo,
+# resolvido automaticamente por github.repository_owner. Se o "name" do package.json não
+# bater com esse escopo, o workflow falha cedo com um erro explicando o motivo.
+#
+# Rodando na branch de produção (default "main", ver input production-branch): publica com a
+# dist-tag "latest". Rodando em qualquer outra branch: publica com a dist-tag "rc" — nunca
+# "latest", pra ninguém instalar uma versão de teste sem pedir explicitamente
+# (npm install pacote@rc). Cabe ao dev deixar a versão no package.json condizente (ex.: com
+# sufixo -rc.N fora da main) — este workflow não valida isso, só decide a dist-tag pela branch.
+
+on:
+  workflow_call:
+    inputs:
+      production-branch:
+        required: false
+        type: string
+        default: "main"
+        description: >-
+          Nome da branch considerada produção. Rodando nela: dist-tag "latest". Rodando em
+          qualquer outra: dist-tag "rc".
+      node-version:
+        required: false
+        type: string
+        default: "20"
+      working-directory:
+        required: false
+        type: string
+        default: "."
+        description: "Onde fica o package.json — sobrescreva em monorepo (ex.: packages/shared)"
+      registry-url:
+        required: false
+        type: string
+        default: "https://npm.pkg.github.com"
+      install-command:
+        required: false
+        type: string
+        default: "npm ci"
+      test-command:
+        required: false
+        type: string
+        default: "npm test"
+      build-command:
+        required: false
+        type: string
+        default: "npm run build"
+    outputs:
+      published-version:
+        description: Versão publicada (a que já estava no package.json)
+        value: ${{ jobs.publish.outputs.published-version }}
+    secrets:
+      NODE_AUTH_TOKEN:
+        required: false
+        description: >-
+          Token usado para publicar. Se não for passado, usa o GITHUB_TOKEN do próprio
+          workflow chamador — funciona sozinho quando o pacote é publicado no mesmo repo/org
+          de quem chama, sem precisar de "secrets: inherit".
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      published-version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolver escopo da organização
+        id: scope
+        shell: bash
+        run: |
+          SCOPE="@$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          registry-url: ${{ inputs.registry-url }}
+          scope: ${{ steps.scope.outputs.scope }}
+
+      - name: Validar escopo do pacote
+        id: version
+        working-directory: ${{ inputs.working-directory }}
+        shell: bash
+        run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
+          EXPECTED="${{ steps.scope.outputs.scope }}/"
+          if [[ "$PKG_NAME" != "$EXPECTED"* ]]; then
+            echo "::error title=Escopo do pacote incorreto::O \"name\" do package.json é \"$PKG_NAME\", mas o pacote precisa ser sempre escopado como \"$EXPECTED*\" (nome da organização do repositório). Ajuste o package.json antes de publicar."
+            exit 1
+          fi
+          echo "value=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Install
+        working-directory: ${{ inputs.working-directory }}
+        shell: bash
+        run: ${{ inputs.install-command }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || github.token }}
+
+      - name: Test
+        working-directory: ${{ inputs.working-directory }}
+        shell: bash
+        run: ${{ inputs.test-command }}
+
+      - name: Build
+        working-directory: ${{ inputs.working-directory }}
+        shell: bash
+        run: ${{ inputs.build-command }}
+
+      - name: Determinar dist-tag (produção ou teste)
+        id: mode
+        shell: bash
+        run: |
+          if [ "${{ github.ref_name }}" = "${{ inputs.production-branch }}" ]; then
+            echo "dist-tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "dist-tag=rc" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        working-directory: ${{ inputs.working-directory }}
+        shell: bash
+        run: npm publish --tag "${{ steps.mode.outputs.dist-tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || github.token }}
