@@ -1,0 +1,398 @@
+---
+name: Deploy Lambda Python
+on:
+  workflow_call:
+    inputs:
+      aws-region:
+        required: false
+        type: string
+        default: us-east-1
+        description: AWS Region
+      environment:
+        required: true
+        type: string
+        description: Environment
+      lambda-architecture:
+        required: false
+        type: string
+        default: x86_64
+        description: Lambda Architecture (arm64 ou x86_64)
+      lambda-function-name:
+        required: true
+        type: string
+        description: Lambda Function Name
+      lambda-handler:
+        required: true
+        type: string
+        description: "Lambda handler function (ex.: api.main.handler)"
+      lambda-memory-size:
+        required: false
+        type: number
+        default: 128
+        description: Lambda Memory Size (in Mb)
+      lambda-runtime:
+        required: true
+        type: string
+        description: "Lambda Runtime (python3.12 ou mais novo, ex.: python3.13)"
+      lambda-timeout:
+        required: false
+        type: number
+        default: 10
+        description: Lambda Timeout in Seconds
+      runs-on:
+        required: false
+        type: string
+        default: ubuntu-latest
+        description: Instance OS
+      skip-vault:
+        required: false
+        type: boolean
+        default: false
+        description: Should skip vault step (mantém as env vars atuais da função)
+      source-path:
+        required: false
+        type: string
+        default: src
+        description: Pasta cujo conteúdo vai para a raiz do zip
+      vault-approle-name:
+        required: false
+        type: string
+        default: approle
+        description: Vault approle auth name
+      vault-secret-path:
+        required: false
+        type: string
+        description: "Vault Secret Path (KV v2, ex.: kv/data/<sistema>/<env>/<app>)"
+    secrets:
+      AWS_ROLE_TO_ASSUME:
+        required: true
+        description: ARN da role IAM de deploy, assumida via OIDC (sem access key)
+      LAMBDA_ROLE_ARN:
+        required: true
+        description: ARN da role de execução da Lambda
+      LAMBDA_SUBNET_IDS:
+        required: true
+        description: Subnets privadas da Lambda, separadas por vírgula
+      LAMBDA_SECURITY_GROUP_IDS:
+        required: true
+        description: Security groups da Lambda, separados por vírgula
+      VAULT_ADDR:
+        required: false
+        description: URL do Vault
+      VAULT_APPROLE_ID:
+        required: false
+        description: role_id do AppRole
+      VAULT_SECRET_ID:
+        required: false
+        description: secret_id do AppRole
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  deploy:
+    runs-on: ${{ inputs.runs-on }}
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-lambda-python-${{ inputs.aws-region }}-${{ inputs.lambda-function-name }}
+      cancel-in-progress: false
+    steps:
+      - name: Validate secrets
+        env:
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          LAMBDA_ROLE_ARN: ${{ secrets.LAMBDA_ROLE_ARN }}
+          LAMBDA_SECURITY_GROUP_IDS: ${{ secrets.LAMBDA_SECURITY_GROUP_IDS }}
+          LAMBDA_SUBNET_IDS: ${{ secrets.LAMBDA_SUBNET_IDS }}
+        run: |
+          set -euo pipefail
+
+          ROLE_RE='^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$'
+          for v in AWS_ROLE_TO_ASSUME LAMBDA_ROLE_ARN; do
+            if [[ ! "${!v}" =~ $ROLE_RE ]]; then
+              echo "::error::$v precisa ser o ARN de uma role IAM (arn:aws:iam::<conta>:role/<nome>)."
+              exit 1
+            fi
+          done
+
+          jq -nc --arg s "$LAMBDA_SUBNET_IDS" --arg g "$LAMBDA_SECURITY_GROUP_IDS" \
+            'def list: split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0));
+             {SubnetIds: ($s | list), SecurityGroupIds: ($g | list)}' > "$RUNNER_TEMP/vpc-config.json"
+          if ! jq -e '(.SubnetIds | length > 0 and all(test("^subnet-[0-9a-f]{8,17}$")))
+                      and (.SecurityGroupIds | length > 0 and all(test("^sg-[0-9a-f]{8,17}$")))' \
+              "$RUNNER_TEMP/vpc-config.json" > /dev/null; then
+            echo "::error::LAMBDA_SUBNET_IDS e LAMBDA_SECURITY_GROUP_IDS precisam de ao menos um ID válido cada (subnet-..., sg-..., separados por vírgula)."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Build package
+        env:
+          LAMBDA_ARCHITECTURE: ${{ inputs.lambda-architecture }}
+          LAMBDA_RUNTIME: ${{ inputs.lambda-runtime }}
+          SOURCE_PATH: ${{ inputs.source-path }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$LAMBDA_RUNTIME" =~ ^python3\.1[2-9]$ ]]; then
+            echo "::error::lambda-runtime inválido: '$LAMBDA_RUNTIME' (use python3.12 ou mais novo, ex.: python3.13)."
+            exit 1
+          fi
+          PYTHON_VERSION="${LAMBDA_RUNTIME#python}"
+
+          case "$LAMBDA_ARCHITECTURE" in
+            arm64) PLATFORM=aarch64-manylinux_2_28 ;;
+            x86_64) PLATFORM=x86_64-manylinux_2_28 ;;
+            *) echo "::error::lambda-architecture inválida: '$LAMBDA_ARCHITECTURE' (use arm64 ou x86_64)."; exit 1 ;;
+          esac
+
+          if [ ! -d "$SOURCE_PATH" ]; then
+            echo "::error::Pasta '$SOURCE_PATH' não encontrada (input source-path)."
+            exit 1
+          fi
+
+          BUILD_DIR="$RUNNER_TEMP/lambda-build"
+          rm -rf "$BUILD_DIR" "$RUNNER_TEMP/lambda.zip"
+          mkdir -p "$BUILD_DIR"
+
+          if [ -f pyproject.toml ]; then
+            REQUIREMENTS="$RUNNER_TEMP/requirements.lambda.txt"
+            # boto3, botocore e s3transfer já vêm no runtime da Lambda e ficam fora do zip.
+            uv export --locked --no-dev --no-emit-project --quiet \
+              --no-emit-package boto3 --no-emit-package botocore --no-emit-package s3transfer \
+              -o "$REQUIREMENTS"
+            if grep -qvE '^\s*(#|$)' "$REQUIREMENTS"; then
+              uv pip install -r "$REQUIREMENTS" --target "$BUILD_DIR" \
+                --python-platform "$PLATFORM" --python-version "$PYTHON_VERSION" \
+                --only-binary :all: --no-installer-metadata --no-deps
+              rm -rf "${BUILD_DIR:?}/bin" "${BUILD_DIR:?}/.lock"
+            else
+              echo "Sem dependências de runtime no pyproject.toml."
+            fi
+          else
+            echo "::notice::Sem pyproject.toml: o zip leva só o conteúdo de '$SOURCE_PATH'."
+          fi
+
+          cp -r "$SOURCE_PATH"/. "$BUILD_DIR"/
+          rm -rf "${BUILD_DIR:?}/.git"
+          find "$BUILD_DIR" -type d -name __pycache__ -prune -exec rm -rf {} +
+          (cd "$BUILD_DIR" && zip -qr "$RUNNER_TEMP/lambda.zip" .)
+          ls -lh "$RUNNER_TEMP/lambda.zip"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Read Vault secrets
+        if: ${{ !inputs.skip-vault }}
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_APPROLE_ID: ${{ secrets.VAULT_APPROLE_ID }}
+          VAULT_APPROLE_NAME: ${{ inputs.vault-approle-name }}
+          VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
+          VAULT_SECRET_PATH: ${{ inputs.vault-secret-path }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          for v in VAULT_ADDR VAULT_APPROLE_ID VAULT_SECRET_ID VAULT_SECRET_PATH; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v está vazio. Passe os secrets VAULT_* e o input vault-secret-path, ou use skip-vault: true."
+              exit 1
+            fi
+          done
+          VAULT_ADDR="${VAULT_ADDR%/}"
+
+          if ! LOGIN=$(jq -nc '{role_id: env.VAULT_APPROLE_ID, secret_id: env.VAULT_SECRET_ID}' \
+              | curl -sS --fail-with-body --data @- "$VAULT_ADDR/v1/auth/$VAULT_APPROLE_NAME/login"); then
+            echo "::error::Falha no login AppRole '$VAULT_APPROLE_NAME' no Vault."
+            jq -c '.errors? // .' <<< "$LOGIN" || true
+            exit 1
+          fi
+          TOKEN=$(jq -r '.auth.client_token // empty' <<< "$LOGIN")
+          if [ -z "$TOKEN" ]; then
+            echo "::error::O login AppRole não devolveu client_token."
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          trap 'curl -sS -o /dev/null -X POST -H @- "$VAULT_ADDR/v1/auth/token/revoke-self" <<< "X-Vault-Token: $TOKEN" || true' EXIT
+
+          SECRET_FILE="$RUNNER_TEMP/vault-secret.json"
+          if ! curl -sS --fail-with-body -H @- "$VAULT_ADDR/v1/$VAULT_SECRET_PATH" -o "$SECRET_FILE" <<< "X-Vault-Token: $TOKEN"; then
+            echo "::error::Falha ao ler '$VAULT_SECRET_PATH' no Vault."
+            jq -c '.errors? // empty' "$SECRET_FILE" || true
+            rm -f "$SECRET_FILE"
+            exit 1
+          fi
+          if ! jq -e '.data.data | type == "object"' "$SECRET_FILE" >/dev/null; then
+            echo "::error::'$VAULT_SECRET_PATH' não está no formato KV v2 (use o caminho com /data/, ex.: kv/data/<sistema>/<env>/<app>)."
+            rm -f "$SECRET_FILE"
+            exit 1
+          fi
+
+          jq -r '.data.data[] | tostring | select(length >= 6)' "$SECRET_FILE" | while IFS= read -r line; do
+            if [ -n "$line" ]; then echo "::add-mask::$line"; fi
+          done
+
+          RESERVED='["_HANDLER","_X_AMZN_TRACE_ID","AWS_ACCESS_KEY","AWS_ACCESS_KEY_ID","AWS_DEFAULT_REGION","AWS_EXECUTION_ENV","AWS_LAMBDA_FUNCTION_MEMORY_SIZE","AWS_LAMBDA_FUNCTION_NAME","AWS_LAMBDA_FUNCTION_VERSION","AWS_LAMBDA_INITIALIZATION_TYPE","AWS_LAMBDA_LOG_GROUP_NAME","AWS_LAMBDA_LOG_STREAM_NAME","AWS_LAMBDA_RUNTIME_API","AWS_REGION","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN","LAMBDA_RUNTIME_DIR","LAMBDA_TASK_ROOT"]'
+          jq -r --argjson r "$RESERVED" '.data.data | keys[] | select(. as $k | $r | index($k))' "$SECRET_FILE" \
+            | while IFS= read -r key; do
+                echo "::warning::'$key' é reservada pela Lambda (o runtime já define) e foi ignorada."
+              done
+
+          jq -c --argjson r "$RESERVED" \
+            '{Variables: (.data.data | with_entries(select(.key as $k | ($r | index($k)) | not) | .value |= tostring))}' \
+            "$SECRET_FILE" > "$RUNNER_TEMP/lambda-env.json"
+          rm -f "$SECRET_FILE"
+          echo "Env vars do Vault: $(jq -r '.Variables | keys | join(", ")' "$RUNNER_TEMP/lambda-env.json")"
+
+      - name: Deploy Lambda
+        env:
+          ARTIFACTS_BUCKET: ${{ vars.LAMBDA_ARTIFACTS_BUCKET }}
+          FUNCTION_NAME: ${{ inputs.lambda-function-name }}
+          LAMBDA_ARCHITECTURE: ${{ inputs.lambda-architecture }}
+          LAMBDA_HANDLER: ${{ inputs.lambda-handler }}
+          LAMBDA_MEMORY_SIZE: ${{ inputs.lambda-memory-size }}
+          LAMBDA_ROLE_ARN: ${{ secrets.LAMBDA_ROLE_ARN }}
+          LAMBDA_RUNTIME: ${{ inputs.lambda-runtime }}
+          LAMBDA_TIMEOUT: ${{ inputs.lambda-timeout }}
+          SKIP_VAULT: ${{ inputs.skip-vault }}
+        run: |
+          set -euo pipefail
+
+          wait_lambda() {
+            local attempt
+            for attempt in 1 2 3; do
+              if aws lambda wait "$1" --function-name "$FUNCTION_NAME" 2>"$RUNNER_TEMP/wait.err"; then
+                return 0
+              fi
+              if ! grep -q "Max attempts exceeded" "$RUNNER_TEMP/wait.err" || [ "$attempt" -eq 3 ]; then
+                break
+              fi
+              echo "$FUNCTION_NAME ainda não está pronta; aguardando mais ($attempt/3)..."
+            done
+            cat "$RUNNER_TEMP/wait.err" >&2
+            return 1
+          }
+
+          ZIP="$RUNNER_TEMP/lambda.zip"
+          ZIP_BYTES=$(stat -c %s "$ZIP")
+          if [ -n "$ARTIFACTS_BUCKET" ]; then
+            S3_KEY="${GITHUB_REPOSITORY#*/}/$FUNCTION_NAME/$GITHUB_SHA.zip"
+            aws s3 cp "$ZIP" "s3://$ARTIFACTS_BUCKET/$S3_KEY" --only-show-errors
+            echo "Pacote em s3://$ARTIFACTS_BUCKET/$S3_KEY"
+            CREATE_CODE=(--code "S3Bucket=$ARTIFACTS_BUCKET,S3Key=$S3_KEY")
+            UPDATE_CODE=(--s3-bucket "$ARTIFACTS_BUCKET" --s3-key "$S3_KEY")
+          elif [ "$ZIP_BYTES" -gt 52428800 ]; then
+            echo "::error::O zip tem $ZIP_BYTES bytes, acima do limite de 50 MB do upload direto. Configure a variável LAMBDA_ARTIFACTS_BUCKET no Environment."
+            exit 1
+          else
+            CREATE_CODE=(--zip-file "fileb://$ZIP")
+            UPDATE_CODE=(--zip-file "fileb://$ZIP")
+          fi
+
+          ENV_ARGS=()
+          if [ "$SKIP_VAULT" != "true" ]; then
+            ENV_ARGS=(--environment "file://$RUNNER_TEMP/lambda-env.json")
+          fi
+
+          VPC_ARGS=(--vpc-config "file://$RUNNER_TEMP/vpc-config.json")
+
+          if INFO=$(aws lambda get-function --function-name "$FUNCTION_NAME" \
+              --query 'Configuration.[PackageType, State, LastUpdateStatus]' --output text 2>"$RUNNER_TEMP/get-function.err"); then
+            EXISTS=true
+            read -r PACKAGE_TYPE STATE LAST_UPDATE <<< "$INFO"
+          elif grep -q ResourceNotFoundException "$RUNNER_TEMP/get-function.err"; then
+            EXISTS=false
+          else
+            cat "$RUNNER_TEMP/get-function.err"
+            exit 1
+          fi
+
+          if [ "$EXISTS" = "false" ]; then
+            echo "Criando $FUNCTION_NAME..."
+            for attempt in 1 2 3 4 5 6; do
+              if VERSION=$(aws lambda create-function \
+                  --function-name "$FUNCTION_NAME" \
+                  --runtime "$LAMBDA_RUNTIME" \
+                  --role "$LAMBDA_ROLE_ARN" \
+                  --handler "$LAMBDA_HANDLER" \
+                  --architectures "$LAMBDA_ARCHITECTURE" \
+                  --memory-size "$LAMBDA_MEMORY_SIZE" \
+                  --timeout "$LAMBDA_TIMEOUT" \
+                  --publish \
+                  "${CREATE_CODE[@]}" "${ENV_ARGS[@]}" "${VPC_ARGS[@]}" \
+                  --query 'Version' --output text 2>"$RUNNER_TEMP/create.err"); then
+                break
+              fi
+              # Role ou policy de VPC recém-criadas levam alguns segundos para valer na Lambda.
+              if grep -qE "cannot be assumed by Lambda|permissions to call CreateNetworkInterface" "$RUNNER_TEMP/create.err" \
+                  && [ "$attempt" -lt 6 ]; then
+                echo "Permissões da role ainda propagando; nova tentativa em 10s ($attempt/6)..."
+                sleep 10
+                continue
+              fi
+              cat "$RUNNER_TEMP/create.err"
+              exit 1
+            done
+            wait_lambda function-active-v2
+          else
+            if [ "$PACKAGE_TYPE" != "Zip" ]; then
+              echo "::error::$FUNCTION_NAME existe com PackageType=$PACKAGE_TYPE. O deploy por zip exige uma função Zip (recrie a função)."
+              exit 1
+            fi
+            if [ "$STATE" = "Pending" ]; then
+              wait_lambda function-active-v2
+            fi
+            case "$LAST_UPDATE" in
+              InProgress) wait_lambda function-updated-v2 ;;
+              Failed) echo "::warning::A última atualização de $FUNCTION_NAME falhou; este deploy vai sobrescrevê-la." ;;
+            esac
+
+            echo "Atualizando configuração de $FUNCTION_NAME..."
+            aws lambda update-function-configuration \
+              --function-name "$FUNCTION_NAME" \
+              --runtime "$LAMBDA_RUNTIME" \
+              --role "$LAMBDA_ROLE_ARN" \
+              --handler "$LAMBDA_HANDLER" \
+              --memory-size "$LAMBDA_MEMORY_SIZE" \
+              --timeout "$LAMBDA_TIMEOUT" \
+              "${ENV_ARGS[@]}" "${VPC_ARGS[@]}" \
+              --query 'LastUpdateStatus' --output text
+            wait_lambda function-updated-v2
+
+            echo "Atualizando código de $FUNCTION_NAME..."
+            VERSION=$(aws lambda update-function-code \
+              --function-name "$FUNCTION_NAME" \
+              --architectures "$LAMBDA_ARCHITECTURE" \
+              "${UPDATE_CODE[@]}" \
+              --publish \
+              --query 'Version' --output text)
+            wait_lambda function-updated-v2
+          fi
+
+          VPC_ID=$(aws lambda get-function --function-name "$FUNCTION_NAME" --qualifier "$VERSION" \
+            --query 'Configuration.VpcConfig.VpcId' --output text)
+          if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
+            echo "::error::$FUNCTION_NAME ficou fora da VPC."
+            exit 1
+          fi
+
+          echo "$FUNCTION_NAME publicada na versão $VERSION (VPC $VPC_ID)."
+          {
+            echo "### Lambda \`$FUNCTION_NAME\`"
+            echo ""
+            echo "| Versão | Runtime | Arquitetura | Handler | Memória | Timeout | VPC | Zip |"
+            echo "|---|---|---|---|---|---|---|---|"
+            echo "| $VERSION | $LAMBDA_RUNTIME | $LAMBDA_ARCHITECTURE | \`$LAMBDA_HANDLER\` | $LAMBDA_MEMORY_SIZE MB | $LAMBDA_TIMEOUT s | $VPC_ID | $((ZIP_BYTES / 1024 / 1024)) MB |"
+          } >> "$GITHUB_STEP_SUMMARY"
