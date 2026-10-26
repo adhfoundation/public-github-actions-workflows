@@ -65,7 +65,7 @@ on:
         required: false
         type: string
         description: Github runner container
-        default: "public.ecr.aws/u1y2d3y2/cd-argocd:2.9.0"
+        default: "ghcr.io/iclinic/cd-argocd:2.9.0@sha256:95e7cf0ab838c6c4a6c4fb355ec911292c5ee4b526bc335b3053f1554e143d16"
 
       image-tag:
         required: true
