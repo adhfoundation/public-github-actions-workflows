@@ -48,6 +48,11 @@ on:
         required: false
         type: boolean
         default: true
+      pr_comment_mode:
+        description: "How to publish the PR report: 'new' posts a new comment on every run; 'update' edits the previous one"
+        required: false
+        type: string
+        default: "new"
     secrets:
       SONAR_FOUNDATION_TOKEN:
         required: true
@@ -105,6 +110,11 @@ on:
         required: false
         type: boolean
         default: true
+      pr_comment_mode:
+        description: "How to publish the PR report: 'new' posts a new comment on every run; 'update' edits the previous one"
+        required: false
+        type: string
+        default: "new"
 
 jobs:
   static-application-security-testing:
@@ -256,6 +266,11 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           SONAR_OUTCOME: ${{ steps.sonar.outcome }}
+          PR_COMMENT_MODE: ${{ inputs.pr_comment_mode }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
         shell: bash
         run: |
           set -euo pipefail
@@ -406,6 +421,8 @@ jobs:
               echo ""
               echo "**Decision:** $DECISION"
               echo ""
+              echo "**Commit:** \`${HEAD_SHA:0:7}\` · **Run:** [$RUN_ID]($RUN_URL) (attempt $RUN_ATTEMPT) · $(date -u '+%Y-%m-%d %H:%M UTC')"
+              echo ""
               echo "- Risk ($GATE_BLOCK_QUALITIES @ $GATE_BLOCK_SEVERITIES): **$RISK**"
               echo "- Maintainability: **$MAINT** (report only)"
               echo "- Total new-code issues: **$TOTAL**"
@@ -427,9 +444,18 @@ jobs:
 
             BODY=$(jq -Rs . < comment.md)
             API="https://api.github.com/repos/$REPO"
-            EXISTING=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-              "$API/issues/$PR_KEY/comments?per_page=100" \
-              | jq -r --arg m "$MARKER" '[.[] | select(.body | contains($m))][0].id // empty' || true)
+            MODE="$(echo "${PR_COMMENT_MODE:-new}" | tr '[:upper:]' '[:lower:]' | xargs)"
+            case "$MODE" in
+              new|update) ;;
+              *) echo "::warning::Unknown pr_comment_mode '$PR_COMMENT_MODE'; using 'new'."; MODE="new" ;;
+            esac
+
+            EXISTING=""
+            if [ "$MODE" = "update" ]; then
+              EXISTING=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "$API/issues/$PR_KEY/comments?per_page=100" \
+                | jq -r --arg m "$MARKER" '[.[] | select(.body | contains($m))][0].id // empty' || true)
+            fi
 
             if [ -n "$EXISTING" ]; then
               curl -sS -X PATCH -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
